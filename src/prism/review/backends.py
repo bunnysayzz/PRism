@@ -15,6 +15,7 @@ robust JSON extraction (markdown fences stripped by schemas.parse_findings).
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import Any
 
 import httpx
@@ -44,6 +45,10 @@ class ReviewBackend(ABC):
         findings = parse_findings(text or "")
         log.info("backend_analyze_ok", backend=self.name, findings=len(findings))
         return findings, usage
+
+    async def aclose(self) -> None:
+        """Release backend resources (HTTP clients). Default: no-op."""
+        return None
 
 
 def _chat_messages(system_prompt: str, user_prompt: str) -> list[dict[str, str]]:
@@ -205,12 +210,64 @@ class StubBackend(ReviewBackend):
         return None
 
 
+class ChainedBackend(ReviewBackend):
+    """Try backends in order; fail over to the next on BackendError.
+
+    Used for the backup API provider chain: N configured providers are tried
+    in order per request, so one dead key, quota exhaustion, or outage
+    doesn't kill the review — the next provider picks it up. If every
+    provider fails, raises BackendError summarizing each failure.
+    """
+
+    name = "chain"
+
+    def __init__(self, backends: Sequence[ReviewBackend]) -> None:
+        if not backends:
+            raise ValueError("ChainedBackend needs at least one backend")
+        self.backends = list(backends)
+
+    @property
+    def model(self) -> str:
+        return "+".join(getattr(b, "model", b.name) for b in self.backends)
+
+    async def complete(self, system_prompt: str, user_prompt: str) -> tuple[str, dict[str, Any]]:
+        errors: list[str] = []
+        for backend in self.backends:
+            try:
+                text, meta = await backend.complete(system_prompt, user_prompt)
+            except BackendError as exc:
+                errors.append(f"{backend.name}: {exc}")
+                log.warning("chain_failover", failed_backend=backend.name, error=str(exc)[:200])
+                continue
+            meta = dict(meta)
+            meta["chain_used"] = backend.name
+            return text, meta
+        raise BackendError("all providers in chain failed: " + " | ".join(errors))
+
+    async def aclose(self) -> None:
+        for backend in self.backends:
+            await backend.aclose()
+
+    def describe_chain(self) -> list[str]:
+        """Backend names in failover order (no secrets)."""
+        return [b.name for b in self.backends]
+
+
 def build_backend(settings: Any, *, for_verification: bool = False) -> ReviewBackend:
     """
     Factory. `for_verification=True` returns the stronger fallback backend
-    (APIBackend) used for the confidence-gate second pass.
+    used for the confidence-gate second pass.
+
+    When PRISM_PROVIDERS is configured (one or more backup API providers),
+    both the "api" route and the verifier use a ChainedBackend that fails
+    over across providers per request.
     """
+    from prism.review.providers import build_provider_backends, provider_specs_from_env
+
     if for_verification or settings.review_backend == "api":
+        specs = provider_specs_from_env()
+        if specs:
+            return ChainedBackend(build_provider_backends(specs))
         return APIBackend(
             settings.fallback_api_base,
             settings.fallback_model,

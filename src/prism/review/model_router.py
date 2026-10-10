@@ -6,9 +6,11 @@ Precedence (first match wins):
      -> VLLMBackend, served via vLLM with --enable-lora.
   2. HF endpoint configured (hf_endpoint_url + hf_token in Settings)
      -> HFEndpointBackend.
-  3. Fallback API key present (fallback_api_key in Settings)
+  3. PRISM_PROVIDERS configured (one or more backup API providers)
+     -> ChainedBackend of APIBackend, failing over per request.
+  4. Fallback API key present (fallback_api_key in Settings)
      -> APIBackend (generic OpenAI-compatible API).
-  4. Otherwise -> StubBackend (dev only).
+  5. Otherwise -> StubBackend (dev only).
 
 The choice is logged once at startup and exposed via describe() for /readyz
 (never includes secrets). probe_backend() is a tiny transport-level health
@@ -29,10 +31,16 @@ from prism.logging import get_logger
 from prism.review.backends import (
     APIBackend,
     BackendError,
+    ChainedBackend,
     HFEndpointBackend,
     ReviewBackend,
     StubBackend,
     VLLMBackend,
+)
+from prism.review.providers import (
+    build_provider_backends,
+    describe_specs,
+    provider_specs_from_env,
 )
 
 log = get_logger(__name__)
@@ -72,7 +80,7 @@ class ModelRouter:
             model=getattr(self._backend, "model", self._backend.name),
         )
 
-    def _select(self) -> tuple[ReviewBackend, str, dict[str, str]]:
+    def _select(self) -> tuple[ReviewBackend, str, dict[str, Any]]:
         settings = self._settings
         adapter_dir = os.environ.get("PRISM_ADAPTER_DIR", "").strip()
         backend: ReviewBackend
@@ -83,7 +91,7 @@ class ModelRouter:
                 backend = VLLMBackend(
                     settings.vllm_base_url, model, timeout_s=settings.vllm_timeout_s
                 )
-                detail = {
+                detail: dict[str, Any] = {
                     "adapter_dir": str(adapter_path),
                     "base_url": settings.vllm_base_url,
                     "model": model,
@@ -99,6 +107,12 @@ class ModelRouter:
                 settings.hf_endpoint_url, settings.hf_token, timeout_s=settings.hf_timeout_s
             )
             return backend, "hf_endpoint", {"endpoint_url": settings.hf_endpoint_url}
+        specs = provider_specs_from_env()
+        if specs:
+            backends = build_provider_backends(specs)
+            backend = ChainedBackend(backends)
+            detail = {"providers": describe_specs(specs)}
+            return backend, "providers", detail
         if settings.fallback_api_key:
             backend = APIBackend(
                 settings.fallback_api_base,

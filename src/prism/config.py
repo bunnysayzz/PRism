@@ -97,6 +97,15 @@ class Settings(BaseSettings):
             raise ValueError("confidence_verify must be <= confidence_auto_post")
         return v
 
+    @field_validator("prism_adapter_dir", "mlflow_tracking_uri", mode="before")
+    @classmethod
+    def _empty_optional_str_is_none(cls, v: Any) -> Any:
+        # .env files often carry FOO= (empty); treat that the same as unset
+        # so "not configured" stays the default for optional string fields.
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
     def private_key_pem(self) -> str:
         """Load the App private key from file. Never from env contents."""
         if not self.github_private_key_path:

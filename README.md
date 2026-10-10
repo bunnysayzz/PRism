@@ -104,6 +104,22 @@ uvicorn prism.main:app --reload
 Point your webhook forwarder (smee/ngrok) at `http://localhost:8000/webhooks/github`,
 open a PR on an installed repo, and watch the review land.
 
+### Run on backup API providers (no self-hosted model)
+
+Don't want to train or host a model? Point PRism at one or more
+OpenAI-compatible API providers instead — they're tried in order per
+request, so a dead key or outage fails over to the next one automatically:
+
+```bash
+PRISM_PROVIDERS='[{"name":"agentrouter","preset":"agentrouter","api_key":"dsk-...","model":"deepseek/deepseek-v4-flash"}]' \
+  docker compose up --build
+```
+
+Known presets: `agentrouter`, `openai`, `deepseek`, `openrouter`.
+Any other OpenAI-compatible gateway works via `"base_url"` instead of
+`"preset"`. See `.env.example` for the full format. Keys live in `.env`
+only — never commit them.
+
 ### Serve the fine-tuned model (GPU host)
 
 ```bash
