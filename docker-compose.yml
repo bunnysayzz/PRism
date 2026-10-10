@@ -1,0 +1,131 @@
+# PRism services.
+#
+#   docker compose up --build            # api + worker + redis + mlflow
+#   docker compose --profile serving up  # also start vLLM with the LoRA adapter
+#
+# All secrets come from .env / mounted files — nothing secret is baked into
+# images or committed to the repo.
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      # NOTE: with `--profile serving`, point the app at the vLLM service by
+      # setting VLLM_BASE_URL=http://vllm:8000 in your .env.
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      # mount the private key read-only; never bake it into the image
+      - ./private-key.pem:/app/keys/private-key.pem:ro
+      - ./config.yaml:/app/config.yaml:ro
+      - feedback-data:/app/feedback_data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5).getcode() == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  worker:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      # NOTE: with `--profile serving`, set VLLM_BASE_URL=http://vllm:8000 in .env.
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: ["python", "-m", "prism.worker"]
+    volumes:
+      - ./private-key.pem:/app/keys/private-key.pem:ro
+      - ./config.yaml:/app/config.yaml:ro
+      - feedback-data:/app/feedback_data
+
+  mlflow:
+    # Tracking server for training/eval runs (sqlite backend store by default;
+    # swap MLFLOW_BACKEND_STORE_URI for Postgres in real deployments).
+    # Pinned digest for mlflow v2.16.0, refreshed 2026-10-07.
+    image: ghcr.io/mlflow/mlflow:v2.16.0@sha256:c9a14c4341220855b4cceecd55f5b1f7db336ed44bfb30c711a35ddfafe38df2
+    restart: unless-stopped
+    command: >
+      mlflow server
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --host 0.0.0.0 --port 5000
+    ports:
+      - "5000:5000"
+    environment:
+      MLFLOW_BACKEND_STORE_URI: ${MLFLOW_BACKEND_STORE_URI:-sqlite:////mlflow/mlflow.db}
+    volumes:
+      - mlflow-data:/mlflow
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # --- Model serving (profile: serving) ---------------------------------
+  # vLLM serving the fine-tuned LoRA adapter over the base model.
+  # Needs a GPU host (nvidia-container-toolkit). Start with:
+  #   VLLM_BASE_URL=http://vllm:8000 PRISM_ADAPTER_DIR=/path/to/adapter \
+  #     docker compose --profile serving up
+  # (VLLM_BASE_URL must point at the service name so api/worker can reach it.)
+  #
+  # vllm:
+  #   profiles: ["serving"]
+  #   image: vllm/vllm-openai:v0.6.3
+  #   restart: unless-stopped
+  #   command: >
+  #     --model meta-llama/Meta-Llama-3-8B-Instruct
+  #     --enable-lora
+  #     --lora-modules code-review=/adapter
+  #     --served-model-name code-review-llama3-lora
+  #     --host 0.0.0.0 --port 8000
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   environment:
+  #     HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}   # only if the base model is gated
+  #   volumes:
+  #     - ${PRISM_ADAPTER_DIR:-./adapter}:/adapter:ro
+  #     - hf-cache:/root/.cache/huggingface
+  #   healthcheck:
+  #     test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 120s
+
+volumes:
+  redis-data:
+  feedback-data:
+  mlflow-data:
+  # hf-cache:   # uncomment with the serving profile above

@@ -1,0 +1,35 @@
+# Repo-level config for PRism. Copy to config.yaml and edit.
+# Environment variables (.env) control credentials and backends;
+# this file controls review behavior per deployment.
+
+# If non-empty, ONLY these repos are reviewed (format "owner/repo").
+# Empty list = review every repo the App is installed on.
+repos_allowlist: []
+# - "myorg/myrepo"
+
+# Minimum severity to post. One of: low | medium | high | critical
+severity_threshold: low
+
+# Extra ignore globs on top of the built-in defaults
+# (lockfiles, minified assets, vendor/, dist/, generated protobuf, ...).
+ignore_globs:
+  - "**/*.snap"
+  - "**/migrations/**"
+
+# Enable/disable finding categories. Unknown categories default to enabled.
+categories:
+  style: false        # never post style nitpicks
+  security: true
+  correctness: true
+  concurrency: true
+  performance: true
+  resource: true
+  api: true
+
+# Max findings the model may return per file (keeps huge files bounded).
+max_findings_per_file: 10
+
+# Model routing hints (informational for now; used by future gateway work).
+model_routing:
+  primary: vllm
+  verifier: api

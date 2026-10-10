@@ -1,0 +1,129 @@
+name: docker
+
+# Build the PRism image on every PR (build-only), and build+push to GHCR
+# on pushes to main and version tags (v*).
+#
+# Images: ghcr.io/<owner>/prism:<sha|branch|tag>  (+ :latest on main)
+# Platforms: linux/amd64, linux/arm64 via buildx.
+# Smoke test runs the built image and curls /healthz; push events smoke-test
+# the pushed image by pulling it back.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tags: ${{ steps.meta.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      # PRs: build amd64 only, load into the local daemon for the smoke test.
+      - name: build (PR, no push)
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: prism:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: smoke test (PR)
+        if: github.event_name == 'pull_request'
+        run: |
+          docker run -d --name prism-smoke -p 8000:8000 prism:smoke
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:8000/healthz >/dev/null 2>&1; then
+              echo "healthz OK"; break
+            fi
+            sleep 3
+          done
+          curl -fsS http://localhost:8000/healthz
+          docker logs prism-smoke --tail 20
+          docker stop prism-smoke && docker rm prism-smoke
+
+      # main/tags: multi-arch build and push to GHCR.
+      - name: build and push
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  smoke-pushed:
+    name: smoke test (pushed image)
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: pull and smoke test
+        run: |
+          IMAGE=$(printf '%s\n' '${{ needs.build.outputs.tags }}' | head -n 1)
+          echo "smoke-testing $IMAGE"
+          docker pull "$IMAGE"
+          docker run -d --name prism-smoke -p 8000:8000 "$IMAGE"
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:8000/healthz >/dev/null 2>&1; then
+              echo "healthz OK"; break
+            fi
+            sleep 3
+          done
+          curl -fsS http://localhost:8000/healthz
+          docker logs prism-smoke --tail 20
+          docker stop prism-smoke && docker rm prism-smoke

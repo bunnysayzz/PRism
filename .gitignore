@@ -1,0 +1,27 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env
+private-key.pem
+*.pem
+config.yaml
+feedback_data/
+train*.jsonl
+# Data pipeline artifacts (samples/ is committed; raw/processed are local)
+data/raw/
+data/processed/
+data/checkpoints/
+checkpoints/
+outputs/
+mlruns/
+eval/reports/
+dist/
+build/
+*.egg-info/
+.DS_Store
+.idea/
+.vscode/

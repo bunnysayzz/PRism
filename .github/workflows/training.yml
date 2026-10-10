@@ -1,0 +1,245 @@
+name: training
+
+# Full ML training loop: data prep -> QLoRA fine-tune -> eval vs baseline ->
+# adapter artifact + eval report -> GitHub Release on passing thresholds.
+#
+# Triggered manually (workflow_dispatch). A nightly schedule can be enabled
+# by uncommenting the cron block below once the pipeline is trusted.
+#
+# GPU RUNNER REQUIREMENT: the `train` job needs a self-hosted runner with an
+# NVIDIA GPU and the label `gpu` (e.g. `runs-on: [self-hosted, gpu]`).
+# See docs/WORKFLOWS.md for runner setup. If you only have the default
+# GitHub-hosted runners, this job will queue forever — do NOT enable the
+# schedule until the GPU runner is online and labeled.
+#
+# Interfaces assumed (other workers building these — see docs/WORKFLOWS.md):
+#   scripts/collect_pr_data.py --repos <csv> --out <dir> [--token-env GH_TOKEN]
+#   scripts/train.py --config configs/train_qlora.yaml
+#   python -m prism.eval.runner --golden ... --backend hf_endpoint --min-f1 ...
+
+on:
+  workflow_dispatch:
+    inputs:
+      dataset_repos:
+        description: "Comma-separated owner/repo list for data collection"
+        required: false
+        default: "enginoor/PRism"
+        type: string
+      config:
+        description: "Training config path"
+        required: false
+        default: "configs/train_qlora.yaml"
+        type: string
+      min_f1:
+        description: "Minimum eval F1 for the new adapter vs baseline"
+        required: false
+        default: "0.70"
+        type: string
+      hf_repo:
+        description: "Optional HF Hub repo to push the adapter to (blank = skip)"
+        required: false
+        default: ""
+        type: string
+  # schedule:
+  #   - cron: "0 2 * * 0"   # weekly Sunday 02:00 UTC — enable after GPU runner is online
+
+concurrency:
+  group: training
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  prepare:
+    name: collect training data
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - name: check interfaces
+        run: |
+          test -f scripts/collect_pr_data.py || \
+            { echo "::error::scripts/collect_pr_data.py missing — data-collection worker not merged"; exit 1; }
+          test -f "${{ inputs.config }}" || \
+            { echo "::error::${{ inputs.config }} missing — training-config worker not merged"; exit 1; }
+      - name: collect PR data
+        env:
+          GH_TOKEN: ${{ secrets.GH_DATA_TOKEN }}
+        run: |
+          mkdir -p data/raw
+          python scripts/collect_pr_data.py \
+            --repos "${{ inputs.dataset_repos }}" \
+            --out data/raw
+      - name: upload dataset
+        uses: actions/upload-artifact@v4
+        with:
+          name: training-data-${{ github.run_id }}
+          path: data/raw/
+          retention-days: 90
+
+  train:
+    name: qlora fine-tune
+    needs: [prepare]
+    # SELF-HOSTED GPU RUNNER — see docs/WORKFLOWS.md ("GPU runner setup").
+    runs-on: [self-hosted, gpu]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: download dataset
+        uses: actions/download-artifact@v4
+        with:
+          name: training-data-${{ github.run_id }}
+          path: data/raw
+      - name: check training script
+        run: |
+          test -f scripts/train.py || \
+            { echo "::error::scripts/train.py missing — training worker not merged"; exit 1; }
+      - name: install training stack
+        run: |
+          python -m pip install -U pip
+          pip install -e .
+          # Training deps (move to a `train` extra in pyproject.toml when the
+          # training worker lands; pinned majors here to stay reproducible).
+          pip install "torch>=2.4" "transformers>=4.44" "peft>=0.12" \
+                      "trl>=0.10" "datasets>=2.20" "accelerate>=0.33" \
+                      "bitsandbytes>=0.43"
+      - name: train
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+        run: |
+          mkdir -p adapters
+          python scripts/train.py --config "${{ inputs.config }}"
+      - name: upload adapter
+        uses: actions/upload-artifact@v4
+        with:
+          name: adapter-${{ github.run_id }}
+          path: adapters/
+          retention-days: 90
+
+  evaluate:
+    name: eval vs baseline
+    needs: [train]
+    runs-on: [self-hosted, gpu]
+    permissions:
+      contents: read
+    outputs:
+      f1: ${{ steps.parse.outputs.f1 }}
+      passed: ${{ steps.parse.outputs.passed }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: download adapter
+        uses: actions/download-artifact@v4
+        with:
+          name: adapter-${{ github.run_id }}
+          path: adapters
+      - name: install
+        run: |
+          python -m pip install -U pip
+          pip install -e .
+      - name: run golden eval on new adapter
+        id: run
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_ENDPOINT_URL: ${{ secrets.HF_ENDPOINT_URL }}
+          PRISM_ADAPTER_PATH: adapters/final
+        run: |
+          set -o pipefail
+          GOLDEN=eval/golden.example.jsonl
+          if [ -f eval/golden.jsonl ]; then GOLDEN=eval/golden.jsonl; fi
+          mkdir -p eval-report
+          # hf_endpoint backend serves the fine-tuned adapter; the harness
+          # exits non-zero below --min-f1, which fails this step (and run).
+          python -m prism.eval.runner \
+            --golden "$GOLDEN" \
+            --backend hf_endpoint \
+            --min-f1 "${{ inputs.min_f1 }}" \
+            2>&1 | tee eval-report/adapter-eval.txt
+      - name: parse result
+        id: parse
+        run: |
+          F1=$(grep -oP 'micro\s+precision=\S+ recall=\S+ F1=\K[0-9.]+' eval-report/adapter-eval.txt || echo "unknown")
+          echo "f1=$F1" >> "$GITHUB_OUTPUT"
+          echo "passed=true" >> "$GITHUB_OUTPUT"
+      - name: write model card
+        if: always()
+        run: |
+          cat > eval-report/MODEL_CARD.md <<'EOF'
+          # PRism adapter — run ${{ github.run_id }}
+          - Base config: ${{ inputs.config }}
+          - Dataset repos: ${{ inputs.dataset_repos }}
+          - Eval F1: ${{ steps.parse.outputs.f1 }} (min required: ${{ inputs.min_f1 }})
+          - Gate: ${{ steps.parse.outputs.passed == 'true' && 'PASS' || 'FAIL' }}
+          - Commit: ${{ github.sha }}
+          - Date: ${{ github.event.repository.updated_at }}
+          EOF
+      - name: upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adapter-eval-${{ github.run_id }}
+          path: eval-report/
+          retention-days: 90
+
+  register:
+    name: register model (release)
+    needs: [evaluate]
+    if: needs.evaluate.outputs.passed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: download adapter
+        uses: actions/download-artifact@v4
+        with:
+          name: adapter-${{ github.run_id }}
+          path: adapters
+      - name: download eval report
+        uses: actions/download-artifact@v4
+        with:
+          name: adapter-eval-${{ github.run_id }}
+          path: eval-report
+      - name: optional HF Hub push
+        if: inputs.hf_repo != ''
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          pip install "huggingface_hub>=0.24"
+          python - <<'EOF'
+          import os
+          from huggingface_hub import HfApi
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          api.upload_folder(
+              folder_path="adapters/final",
+              repo_id="${{ inputs.hf_repo }}",
+              commit_message="PRism adapter run ${{ github.run_id }} F1=${{ needs.evaluate.outputs.f1 }}",
+          )
+          EOF
+      - name: create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: adapter-run-${{ github.run_id }}
+          name: "PRism adapter — run ${{ github.run_id }}"
+          body: |
+            Fine-tuned QLoRA adapter passing the golden eval gate.
+
+            - Eval micro-F1: **${{ needs.evaluate.outputs.f1 }}** (min ${{ inputs.min_f1 }})
+            - Config: `${{ inputs.config }}`
+            - Dataset repos: `${{ inputs.dataset_repos }}`
+            - Commit: ${{ github.sha }}
+
+            Model card: see `MODEL_CARD.md` in the eval report.
+            Registry of record: MLflow model registry (`prism-review`) — register the
+            adapter there from the release artifact; see docs/WORKFLOWS.md.
+          files: |
+            eval-report/MODEL_CARD.md
+            eval-report/adapter-eval.txt
+          prerelease: true

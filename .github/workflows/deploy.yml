@@ -1,0 +1,97 @@
+name: deploy
+
+# Deploy PRism to staging or production.
+#
+# Concrete approach (ONE, simple): SSH into a single VPS and
+# `docker compose pull && docker compose up -d` with the GHCR image.
+# The host is expected to already have docker, docker compose, and a
+# compose file + .env referencing ghcr.io/<owner>/prism:<tag>.
+#
+# Post-deploy: curls /healthz (fails the workflow when unhealthy).
+# Rollback: re-run this workflow with the previous image_tag.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "staging"
+        type: choice
+        options: ["staging", "prod"]
+      image_tag:
+        description: "Image tag to deploy (e.g. latest, v0.1.0, sha-abc1234)"
+        required: true
+        default: "latest"
+        type: string
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy to ${{ inputs.environment }}
+    # GitHub Environment protection: add required reviewers on `prod`
+    # in Settings -> Environments. Staging can deploy freely.
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: resolve host
+        id: host
+        run: |
+          if [ "${{ inputs.environment }}" = "prod" ]; then
+            echo "host=${{ secrets.PROD_HOST }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "host=${{ secrets.STAGING_HOST }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: deploy via SSH (compose pull && up)
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ steps.host.outputs.host }}
+          username: ${{ secrets.APP_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            cd /opt/prism
+            # GHCR login for private images (no-op for public ones)
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin || true
+            export PRISM_IMAGE="ghcr.io/${{ github.repository }}:${{ inputs.image_tag }}"
+            echo "deploying $PRISM_IMAGE"
+            docker compose pull api worker
+            docker compose up -d api worker
+            docker compose ps
+
+      - name: post-deploy health check
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ steps.host.outputs.host }}
+          username: ${{ secrets.APP_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            for i in $(seq 1 20); do
+              if curl -fsS http://localhost:8000/healthz >/dev/null 2>&1; then
+                echo "healthz OK"
+                break
+              fi
+              sleep 5
+              if [ "$i" -eq 20 ]; then
+                echo "::error::/healthz never became healthy after deploy"
+                docker compose -f /opt/prism/docker-compose.yml logs --tail 50 api || true
+                exit 1
+              fi
+            done
+            curl -fsS http://localhost:8000/healthz
+
+      # NOTE: /readyz does not exist yet in src/prism/main.py (only /healthz).
+      # When a readiness endpoint lands (checks Redis + config validity),
+      # extend the health check above with: curl -fsS http://localhost:8000/readyz

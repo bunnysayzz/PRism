@@ -1,0 +1,69 @@
+# Production QLoRA config: Llama 3 8B-Instruct on a single 24 GB GPU.
+#
+# Target: ~5K PR-review SFT samples (JSONL, {"messages": [...]} records),
+# response-only loss, strict-JSON findings output.
+#
+# VRAM budget (measured recipe for 8B QLoRA @ seq 4096, batch 2x8):
+#   4-bit base weights ......... ~4.6 GB
+#   LoRA adapters (r=16, all) ... ~0.1 GB
+#   8-bit paged optimizer ....... ~2.5 GB
+#   activations (grad ckpt) ..... ~8-10 GB
+#   ----------------------------------------
+#   peak ........................ ~16-18 GB  (< 24 GB, headroom for eval)
+
+model_id: "meta-llama/Meta-Llama-3-8B-Instruct"
+
+# Data: produced by the data pipeline (src/prism/data/). Point at the real
+# files before launching; val_path is optional (falls back to val_size split).
+train_path: "data/sft/train.jsonl"
+val_path: null
+val_size: 0.05
+max_seq_len: 4096
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  # All attention + MLP projections: QLoRA paper's best 7B/8B setting.
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj",
+                   "gate_proj", "up_proj", "down_proj"]
+  bias: "none"
+  task_type: "CAUSAL_LM"
+
+quant:
+  load_in_4bit: true
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_use_double_quant: true
+  bnb_4bit_compute_dtype: "bfloat16"
+
+# Optimization: ~5K samples, eff. batch 16, 3 epochs ~= 940 steps.
+learning_rate: 0.0002
+per_device_train_batch_size: 2
+per_device_eval_batch_size: 2
+gradient_accumulation_steps: 8
+num_train_epochs: 3
+max_steps: -1            # >0 overrides num_train_epochs
+warmup_ratio: 0.03
+lr_scheduler_type: "cosine"
+weight_decay: 0.0
+optim: "paged_adamw_8bit"
+max_grad_norm: 0.3
+gradient_checkpointing: true
+bf16: true               # Ampere+ GPU required
+packing: false           # must stay false: packing breaks response masking
+group_by_length: true
+dataloader_num_workers: 2
+
+# Checkpointing / eval / early stopping.
+output_dir: "outputs/prism-qlora-llama3-8b"
+logging_steps: 10
+eval_steps: 100
+save_steps: 100
+save_total_limit: 3
+early_stopping_patience: 3
+resume_from_checkpoint: null   # set to a checkpoint dir, or leave null to auto-detect
+seed: 42
+
+# Experiment tracking.
+mlflow_experiment: "prism-qlora"
+run_name: null

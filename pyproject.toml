@@ -1,0 +1,77 @@
+[project]
+name = "PRism"
+version = "0.1.0"
+description = "PRism — an autonomous GitHub App that auto-reviews pull requests with a fine-tuned LLM."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "PRism" }]
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+    "pyjwt[crypto]>=2.8",
+    "cryptography>=42.0",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "pyyaml>=6.0",
+    "arq>=0.26",
+    "redis>=5.0",
+    "structlog>=24.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "httpx",
+    "anyio",
+    "types-pyyaml",
+    "types-redis",
+]
+
+# GPU training stack (install on a CUDA machine; see docs/TRAINING.md).
+# torch: install the CUDA build from the PyTorch cu121 index, not PyPI.
+training = [
+    "torch>=2.4",
+    "transformers==4.44.2",
+    "peft==0.12.0",
+    "trl==0.9.6",
+    "bitsandbytes==0.43.3",
+    "accelerate==0.33.0",
+    "datasets==2.21.0",
+    "mlflow==2.16.2",
+    "rich>=13",
+]
+
+[project.scripts]
+prism = "prism.main:run"
+prism-eval = "prism.eval.runner:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = ["slow: marks tests as slow (e.g. the training CPU smoke test)"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "C4", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+ignore_missing_imports = true

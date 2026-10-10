@@ -1,0 +1,85 @@
+name: eval-gate
+
+# Deep quality gate for pull requests: runs the full benchmark harness
+# (src/prism/eval/harness.py) against the golden set — the candidate model
+# backend runs through the real review pipeline (confidence gate + line
+# validation + matching) and is compared against a heuristic baseline.
+# Fails the build when micro-F1, severity-weighted F1, per-category F1,
+# false-positive rate, or calibration drift below thresholds.
+# `workflow_dispatch` allows evaluating a REAL model backend
+# (vllm/api/hf_endpoint) with the matching secrets configured.
+#
+# Note: the stub backend replays canned answers (F1=1.0 by construction) —
+# it guards pipeline integrity (gate/line-validation/matching regressions),
+# not model quality. Real model signal comes from --backend vllm runs.
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      backend:
+        description: "Model backend: stub | vllm | api | hf_endpoint"
+        required: false
+        default: "stub"
+        type: choice
+        options: ["stub", "vllm", "api", "hf_endpoint"]
+      min_f1:
+        description: "Minimum micro-F1 to pass"
+        required: false
+        default: "0.70"
+        type: string
+
+concurrency:
+  group: eval-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  BACKEND: ${{ inputs.backend || 'stub' }}
+  MIN_F1: ${{ inputs.min_f1 || '0.70' }}
+
+jobs:
+  eval:
+    name: golden eval
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -e .
+
+      - name: run benchmark harness
+        id: eval
+        run: |
+          set -o pipefail
+          GOLDEN=eval/golden.example.jsonl
+          if [ -f eval/golden.jsonl ]; then GOLDEN=eval/golden.jsonl; fi
+          echo "golden set: $GOLDEN"
+          echo "backend: $BACKEND"
+          python -m prism.eval.harness \
+            --golden "$GOLDEN" \
+            --backend "$BACKEND" \
+            --min-f1 "$MIN_F1" \
+            --min-weighted-f1 0.70 \
+            --min-category-f1 security=0.80,correctness=0.70,concurrency=0.60 \
+            --max-fpr 0.35 \
+            --max-ece 0.25 \
+            --report-dir eval-report \
+            2>&1 | tee eval-report/console.txt
+        env:
+          # Real backends read credentials from settings; stub ignores these.
+          PRISM_LLM_API_KEY: ${{ secrets.PRISM_LLM_API_KEY }}
+          HF_ENDPOINT_URL: ${{ secrets.HF_ENDPOINT_URL }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      - name: upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report-${{ github.sha }}
+          path: eval-report/
+          retention-days: 30
