@@ -121,9 +121,9 @@ def _check_settings(settings: Settings) -> dict[str, Any]:
         problems.append("GITHUB_APP_ID is not set")
     if not settings.github_webhook_secret:
         problems.append("GITHUB_WEBHOOK_SECRET is not set")
-    if not settings.github_private_key_path:
+    if not settings.github_private_key_path and not settings.github_private_key_pem.strip():
         problems.append("GITHUB_PRIVATE_KEY_PATH is not set")
-    elif not Path(settings.github_private_key_path).exists():
+    elif settings.github_private_key_path and not Path(settings.github_private_key_path).exists():
         problems.append("GITHUB_PRIVATE_KEY_PATH does not exist")
     return {"ok": not problems, "problems": problems}
 
