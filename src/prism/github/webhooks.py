@@ -20,7 +20,11 @@ SIGNATURE_HEADER = "X-Hub-Signature-256"
 EVENT_HEADER = "X-GitHub-Event"
 
 # (event, action) pairs we act on.
-_WATCHED = {("pull_request", "opened"), ("pull_request", "synchronize")}
+_WATCHED = {
+    ("pull_request", "opened"),
+    ("pull_request", "reopened"),
+    ("pull_request", "synchronize"),
+}
 
 
 def verify_signature(secret: str, body: bytes, signature_header: str | None) -> bool:
