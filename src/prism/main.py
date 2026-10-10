@@ -29,7 +29,7 @@ from typing import Any
 import httpx
 import structlog
 from fastapi import BackgroundTasks, FastAPI, Header, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from prism.config import Settings, get_settings
 from prism.github.webhooks import (
@@ -207,15 +207,40 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     @app.get("/")
-    async def index() -> dict[str, str]:
-        """Landing page: this URL is an API, not a website."""
-        return {
-            "service": "PRism",
-            "description": "Autonomous code review bot (GitHub App).",
-            "health": "/healthz",
-            "readiness": "/readyz",
-            "webhook": "/webhooks/github",
-        }
+    async def index() -> HTMLResponse:
+        """Landing page: service status for humans; this URL is an API."""
+        settings = get_settings()
+        checks = _check_settings(settings)
+        ok = checks["ok"]
+        badge = (
+            '<span style="color:#3fb950">● operational</span>'
+            if ok
+            else '<span style="color:#f85149">● configuration needed</span>'
+        )
+        problems = (
+            "".join(f"<li>{p}</li>" for p in checks["problems"])
+            if checks["problems"]
+            else "<li>none</li>"
+        )
+        html = f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PRism — code review bot</title></head>
+<body style="font-family:system-ui,sans-serif;max-width:640px;margin:4rem auto;padding:0 1rem;line-height:1.6">
+<h1>PRism</h1>
+<p>Autonomous code review bot (GitHub App). {badge}</p>
+<h2>Endpoints</h2>
+<ul>
+<li><a href="/healthz">/healthz</a> — liveness</li>
+<li><a href="/readyz">/readyz</a> — readiness (JSON)</li>
+<li><code>POST /webhooks/github</code> — GitHub webhook receiver</li>
+</ul>
+<h2>Setup checklist</h2>
+<ul>{problems}</ul>
+<p>Install the app at <a href="https://github.com/apps/prism-reviews">github.com/apps/prism-reviews</a>
+to get automated PR reviews.</p>
+</body></html>"""
+        return HTMLResponse(content=html)
 
     @app.get("/readyz")
     async def readyz() -> JSONResponse:
