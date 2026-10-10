@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # --- GitHub App ---
     github_app_id: int = Field(default=0, description="GitHub App ID (numeric)")
     github_private_key_path: str = Field(default="", description="Path to App PEM private key file")
+    github_private_key_pem: str = Field(
+        default="",
+        description="App PEM private key contents (for hosts like Vercel with no files)",
+    )
     github_webhook_secret: str = Field(default="", description="HMAC secret for webhooks")
 
     # --- Queue / Redis ---
@@ -107,7 +111,9 @@ class Settings(BaseSettings):
         return v
 
     def private_key_pem(self) -> str:
-        """Load the App private key from file. Never from env contents."""
+        """Load the App private key: inline PEM env var first, then file."""
+        if self.github_private_key_pem.strip():
+            return self.github_private_key_pem
         if not self.github_private_key_path:
             raise RuntimeError("GITHUB_PRIVATE_KEY_PATH is not set")
         return Path(self.github_private_key_path).read_text(encoding="utf-8")
