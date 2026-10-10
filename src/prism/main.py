@@ -158,6 +158,29 @@ async def _check_backend(settings: Settings) -> dict[str, Any]:
                 "probed": True,
                 "detail": f"probe failed: {type(exc).__name__}",
             }
+    if backend == "api":
+        # Show provider chain config (names/models only, never secrets) so a
+        # misconfigured model is visible without guessing.
+        from prism.review.providers import describe_specs, provider_specs_from_env
+
+        try:
+            specs = describe_specs(provider_specs_from_env())
+        except Exception as exc:
+            specs = []
+            return {
+                "ok": False,
+                "backend": backend,
+                "probed": False,
+                "detail": f"PRISM_PROVIDERS invalid: {exc}",
+                "providers": specs,
+            }
+        return {
+            "ok": True,
+            "backend": backend,
+            "probed": False,
+            "detail": f"{len(specs)} provider(s) configured",
+            "providers": specs,
+        }
     return {
         "ok": True,
         "backend": backend,
