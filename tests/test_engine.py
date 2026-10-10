@@ -71,3 +71,33 @@ async def test_mixed_batch():
     verifier = _verifier(**{"Verify me ok": (True, 0.75), "Verify me bad": (False, 0.0)})
     kept = await _gate(findings, verifier)
     assert [f.title for f in kept] == ["Auto post me", "Verify me ok"]
+
+
+class _FailingBackend:
+    name = "failing"
+
+    async def analyze(self, *a, **k):
+        from prism.review.backends import BackendError
+
+        raise BackendError("connection refused")
+
+
+@pytest.mark.asyncio
+async def test_review_one_file_surfaces_backend_error():
+    """A dead model backend must raise, never silently return "no findings"."""
+    from prism.diff.fetcher import ChangedFile
+    from prism.review.engine import _FileBackendError, _FilePlan, _review_one_file
+
+    plan = _FilePlan(
+        changed=ChangedFile(
+            filename="a.py",
+            status="modified",
+            additions=1,
+            deletions=0,
+            patch="@@ -1 +1 @@\n-x = 1\n+y = 2\n",
+        ),
+        commentable={1},
+    )
+    with pytest.raises(_FileBackendError) as exc_info:
+        await _review_one_file(plan, _FailingBackend(), {}, None, None, "o", "r", "base", "head")
+    assert exc_info.value.path == "a.py"

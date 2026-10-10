@@ -41,7 +41,13 @@ async def review_pr(
         result = await review_pull_request(settings, cfg, client, owner, repo, pr_number)
         head_sha = await gh_reviews.get_pr_head_sha(client, owner, repo, pr_number)
         summary = gh_reviews.render_summary(
-            owner, repo, pr_number, result.findings, result.skipped_files, result.model
+            owner,
+            repo,
+            pr_number,
+            result.findings,
+            result.skipped_files,
+            result.model,
+            result.backend_errors,
         )
         # Always post the summary so the PR shows the bot ran; inline comments
         # only when there are findings (empty comments list is valid).

@@ -67,22 +67,47 @@ def render_summary(
     findings: list[Finding],
     skipped_files: list[str],
     model: str,
+    backend_errors: list[str] | None = None,
 ) -> str:
+    errors = backend_errors or []
     counts: dict[str, int] = {}
     for f in findings:
         counts[f.severity.value] = counts.get(f.severity.value, 0) + 1
     lines = [
         _BOT_MARKER,
-        "## 🤖 PR Review",
-        "",
-        f"Reviewed with `{model}`. Found **{len(findings)}** issue(s): "
-        + (
-            ", ".join(f"{_SEVERITY_EMOJI.get(s, '')} {s}: {n}" for s, n in sorted(counts.items()))
-            if counts
-            else "none - looks clean! 🎉"
-        ),
+        "## PRism review",
         "",
     ]
+    if errors and not findings:
+        # The model never ran: say so loudly. Never claim "looks clean"
+        # when the backend failed - that lie is worse than no review.
+        lines.append(
+            f"Reviewed with `{model}`. **Review incomplete** - the model backend "
+            f"failed on {len(errors)} file(s), so this is not a clean bill of health:"
+        )
+        lines.append("")
+        for err in errors[:5]:
+            lines.append(f"- `{err}`")
+        if len(errors) > 5:
+            lines.append(f"- ...and {len(errors) - 5} more")
+    else:
+        lines.append(
+            f"Reviewed with `{model}`. Found **{len(findings)}** issue(s): "
+            + (
+                ", ".join(
+                    f"{_SEVERITY_EMOJI.get(s, '')} {s}: {n}" for s, n in sorted(counts.items())
+                )
+                if counts
+                else "none - no issues found"
+            )
+        )
+        if errors:
+            lines += [
+                "",
+                f"_Note: the backend failed on {len(errors)} file(s); "
+                "those files were not reviewed._",
+            ]
+    lines.append("")
     if skipped_files:
         lines += [
             "<details><summary>Skipped files</summary>",

@@ -65,6 +65,8 @@ class ReviewResult(BaseModel):
     skipped_files: list[str] = Field(default_factory=list)
     model: str = ""
     usage: dict[str, Any] = Field(default_factory=dict)
+    # Files where the model backend itself failed (never silently "clean").
+    backend_errors: list[str] = Field(default_factory=list)
 
 
 def parse_findings(raw: str | list[dict[str, Any]] | dict[str, Any]) -> list[Finding]:

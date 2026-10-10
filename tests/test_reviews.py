@@ -49,7 +49,7 @@ def test_render_summary_counts():
         make_finding(severity=Severity.low),
     ]
     summary = reviews.render_summary("o", "r", 1, findings, ["lock.json (ignored)"], "vllm")
-    assert "## 🤖 PR Review" in summary
+    assert "## PRism review" in summary
     assert "critical: 2" in summary
     assert "low: 1" in summary
     assert "lock.json" in summary
@@ -57,4 +57,19 @@ def test_render_summary_counts():
 
 def test_render_summary_no_findings():
     summary = reviews.render_summary("o", "r", 1, [], [], "vllm")
-    assert "looks clean" in summary
+    assert "no issues found" in summary
+    assert "looks clean" not in summary
+
+
+def test_render_summary_backend_errors_no_findings():
+    summary = reviews.render_summary("o", "r", 1, [], [], "vllm", ["a.py: connection refused"])
+    assert "Review incomplete" in summary
+    assert "not a clean bill of health" in summary
+    assert "a.py: connection refused" in summary
+
+
+def test_render_summary_backend_errors_with_findings():
+    findings = [make_finding(severity=Severity.high)]
+    summary = reviews.render_summary("o", "r", 1, findings, [], "vllm", ["b.py: timeout"])
+    assert "high: 1" in summary
+    assert "were not reviewed" in summary

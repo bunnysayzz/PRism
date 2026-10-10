@@ -209,6 +209,15 @@ def _meets_severity_threshold(finding: Finding, threshold: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+class _FileBackendError(Exception):
+    """The model backend failed for one file; distinct from "no findings"."""
+
+    def __init__(self, path: str, error: str) -> None:
+        super().__init__(f"{path}: {error}")
+        self.path = path
+        self.error = error
+
+
 async def _review_one_file(
     plan: _FilePlan,
     primary: ReviewBackend,
@@ -240,8 +249,10 @@ async def _review_one_file(
     try:
         findings, usage = await primary.analyze(prompts.SYSTEM_PROMPT, user_prompt)
     except BackendError as exc:
+        # Fail LOUD, never silent: an exception here means the model did not
+        # run. Returning [] would post a fake "looks clean" review.
         log.error("file_review_failed", path=changed.filename, error=str(exc)[:200])
-        return []
+        raise _FileBackendError(changed.filename, str(exc)[:200]) from exc
     log.info(
         "file_reviewed",
         path=changed.filename,
@@ -302,12 +313,17 @@ async def review_pull_request(
 
     # Bounded concurrency over files.
     semaphore = asyncio.Semaphore(settings.max_concurrent_files)
+    backend_errors: list[str] = []
 
     async def _guarded(plan: _FilePlan) -> list[Finding]:
         async with semaphore:
-            return await _review_one_file(
-                plan, primary, cfg, settings, client, owner, repo, base_sha, head_sha
-            )
+            try:
+                return await _review_one_file(
+                    plan, primary, cfg, settings, client, owner, repo, base_sha, head_sha
+                )
+            except _FileBackendError as exc:
+                backend_errors.append(f"{exc.path}: {exc.error}")
+                return []
 
     per_file = await asyncio.gather(*(_guarded(p) for p in plans))
     findings: list[Finding] = [f for group in per_file for f in group]
@@ -339,6 +355,7 @@ async def review_pull_request(
         findings=findings,
         skipped_files=skipped,
         model=getattr(primary, "model", primary.name),
+        backend_errors=backend_errors,
     )
     feedback.log_review(owner, repo, pr_number, result)
     log.info(
@@ -347,6 +364,7 @@ async def review_pull_request(
         pr=pr_number,
         findings=len(findings),
         skipped=len(skipped),
+        backend_errors=len(backend_errors),
     )
     return result
 

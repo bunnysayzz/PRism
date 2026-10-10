@@ -167,7 +167,8 @@ def test_rate_limit_allows_under_limit(client: TestClient) -> None:
     for _ in range(3):
         resp = client.post("/webhooks/github", content=BODY, headers=_headers(BODY))
         assert resp.status_code == 200
-        assert resp.json() == {"status": "enqueued"}
+        # No Redis in the fixture: the review runs inline (serverless mode).
+        assert resp.json() == {"status": "reviewed", "result": {"status": "ok"}}
 
 
 def test_rate_limit_blocks_over_limit(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
