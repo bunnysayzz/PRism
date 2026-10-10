@@ -317,9 +317,7 @@ def create_app() -> FastAPI:
         # lifecycle; on timeout/failure GitHub redelivers the webhook.
         log.info("inline_mode_awaiting_review")
         try:
-            result = await review_pr(
-                {}, job.installation_id, job.owner, job.repo, job.pr_number
-            )
+            result = await review_pr({}, job.installation_id, job.owner, job.repo, job.pr_number)
         except Exception as exc:  # noqa: BLE001 - webhook must never 500 blind
             # Return the failure as JSON (no secrets: type + short message).
             # A bare 500 makes GitHub retry; an explicit error is debuggable.

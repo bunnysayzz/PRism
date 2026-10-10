@@ -32,22 +32,14 @@ if TYPE_CHECKING:
 
 log = get_logger(__name__)
 
-_SEVERITY_EMOJI = {
-    "critical": "🔴",
-    "high": "🟠",
-    "medium": "🟡",
-    "low": "🔵",
-}
-
 _BOT_MARKER = "<!-- PRism -->"
 
 
 def render_finding_body(finding: Finding) -> str:
     """Render one finding as review-comment markdown."""
-    emoji = _SEVERITY_EMOJI.get(finding.severity.value, "⚪")
     parts = [
         _BOT_MARKER,
-        f"{emoji} **{finding.severity.value.upper()}** · `{finding.category}`",
+        f"**{finding.severity.value.upper()}** · `{finding.category}`",
         "",
         f"**{finding.title}**",
         "",
@@ -95,9 +87,7 @@ def render_summary(
         lines.append(
             f"PRism reviewed this pull request. Found **{len(findings)}** issue(s): "
             + (
-                ", ".join(
-                    f"{_SEVERITY_EMOJI.get(s, '')} {s}: {n}" for s, n in sorted(counts.items())
-                )
+                ", ".join(f"{s}: {n}" for s, n in sorted(counts.items()))
                 if counts
                 else "none - no issues found"
             )

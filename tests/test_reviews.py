@@ -35,7 +35,7 @@ def test_render_finding_body_contents():
         confidence=0.81,
     )
     body = reviews.render_finding_body(f)
-    assert "🟠" in body
+    assert "🟠" not in body
     assert "**HIGH**" in body
     assert "`security`" in body
     assert "```" in body and "escape(name)" in body
