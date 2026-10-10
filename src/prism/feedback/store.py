@@ -34,12 +34,22 @@ def _utcnow_iso() -> str:
 class FeedbackStore:
     def __init__(self, directory: str | Path) -> None:
         self.dir = Path(directory)
-        self.dir.mkdir(parents=True, exist_ok=True)
+        # Serverless filesystems (e.g. Vercel) are read-only: the feedback
+        # loop is best-effort and must never crash a review. Fall back to a
+        # no-op memory mode when the directory is not writable.
+        try:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            self._writable = True
+        except OSError:
+            log.warning("feedback_store_readonly", directory=str(self.dir))
+            self._writable = False
         self.findings_path = self.dir / "findings.jsonl"
         self.outcomes_path = self.dir / "outcomes.jsonl"
 
     def log_review(self, owner: str, repo: str, pr_number: int, result: ReviewResult) -> list[str]:
         """Append one record per finding. Returns the assigned finding_ids."""
+        if not self._writable:
+            return []
         ids: list[str] = []
         ts = _utcnow_iso()
         with self.findings_path.open("a", encoding="utf-8") as fh:
@@ -63,6 +73,8 @@ class FeedbackStore:
         """Record a human outcome for a posted finding."""
         if outcome not in ("accepted", "dismissed", "edited"):
             raise ValueError(f"invalid outcome: {outcome!r}")
+        if not self._writable:
+            return
         record = {
             "finding_id": finding_id,
             "outcome": outcome,
