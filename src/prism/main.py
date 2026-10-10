@@ -206,6 +206,17 @@ def create_app() -> FastAPI:
         """Liveness: 200 as long as the process is up."""
         return {"status": "ok"}
 
+    @app.get("/")
+    async def index() -> dict[str, str]:
+        """Landing page: this URL is an API, not a website."""
+        return {
+            "service": "PRism",
+            "description": "Autonomous code review bot (GitHub App).",
+            "health": "/healthz",
+            "readiness": "/readyz",
+            "webhook": "/webhooks/github",
+        }
+
     @app.get("/readyz")
     async def readyz() -> JSONResponse:
         """Readiness: 200 only when settings, backend, and Redis are all OK."""
