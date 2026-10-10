@@ -207,3 +207,12 @@ def test_router_stub_when_nothing_configured(monkeypatch):
     monkeypatch.delenv("PRISM_ADAPTER_DIR", raising=False)
     router = ModelRouter(_settings_no_backends())
     assert router.route == "stub"
+
+
+def test_base_url_v1_normalized_once():
+    """Both 'host' and 'host/v1' conventions must yield one '/v1' in the URL."""
+    from prism.review.backends import APIBackend
+
+    for base in ("https://example.com", "https://example.com/v1", "https://example.com/v1/"):
+        b = APIBackend(base, "m", "k", timeout_s=5)
+        assert b.base_url == "https://example.com", base

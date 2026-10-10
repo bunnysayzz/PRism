@@ -69,7 +69,13 @@ class _OpenAICompatibleBackend(ReviewBackend):
         timeout_s: float,
         extra_headers: dict[str, str] | None = None,
     ) -> None:
-        self.base_url = base_url.rstrip("/")
+        # Normalize: accept both "https://host" and "https://host/v1" since
+        # presets and user config mix the two conventions. complete() always
+        # appends "/v1/chat/completions" exactly once.
+        base = base_url.rstrip("/")
+        if base.endswith("/v1"):
+            base = base[: -len("/v1")]
+        self.base_url = base
         self.model = model
         self.timeout_s = timeout_s
         headers = {"Content-Type": "application/json"}
