@@ -316,7 +316,27 @@ def create_app() -> FastAPI:
         # silently killing the review. Awaiting keeps it in the request
         # lifecycle; on timeout/failure GitHub redelivers the webhook.
         log.info("inline_mode_awaiting_review")
-        result = await review_pr({}, job.installation_id, job.owner, job.repo, job.pr_number)
+        try:
+            result = await review_pr(
+                {}, job.installation_id, job.owner, job.repo, job.pr_number
+            )
+        except Exception as exc:  # noqa: BLE001 - webhook must never 500 blind
+            # Return the failure as JSON (no secrets: type + short message).
+            # A bare 500 makes GitHub retry; an explicit error is debuggable.
+            log.error(
+                "inline_review_failed",
+                repo=f"{job.owner}/{job.repo}",
+                pr=job.pr_number,
+                error_type=type(exc).__name__,
+                error=str(exc)[:200],
+            )
+            return JSONResponse(
+                {
+                    "status": "error",
+                    "error_type": type(exc).__name__,
+                    "error": str(exc)[:200],
+                }
+            )
         return JSONResponse({"status": "reviewed", "result": result})
 
     return app
