@@ -82,8 +82,9 @@ def render_summary(
         # The model never ran: say so loudly. Never claim "looks clean"
         # when the backend failed - that lie is worse than no review.
         lines.append(
-            f"Reviewed with `{model}`. **Review incomplete** - the model backend "
-            f"failed on {len(errors)} file(s), so this is not a clean bill of health:"
+            f"**Review incomplete** - PRism could not finish this review: "
+            f"the backend failed on {len(errors)} file(s), so this is not "
+            "a clean bill of health:"
         )
         lines.append("")
         for err in errors[:5]:
@@ -92,7 +93,7 @@ def render_summary(
             lines.append(f"- ...and {len(errors) - 5} more")
     else:
         lines.append(
-            f"Reviewed with `{model}`. Found **{len(findings)}** issue(s): "
+            f"PRism reviewed this pull request. Found **{len(findings)}** issue(s): "
             + (
                 ", ".join(
                     f"{_SEVERITY_EMOJI.get(s, '')} {s}: {n}" for s, n in sorted(counts.items())
@@ -117,10 +118,6 @@ def render_summary(
             "</details>",
             "",
         ]
-    lines.append(
-        "_React 👍/👎 or reply to a comment to train the reviewer - "
-        "your feedback feeds the retraining loop._"
-    )
     return "\n".join(lines)
 
 
