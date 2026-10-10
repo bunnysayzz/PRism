@@ -28,7 +28,7 @@ from typing import Any
 
 import httpx
 import structlog
-from fastapi import BackgroundTasks, FastAPI, Header, Request, Response
+from fastapi import FastAPI, Header, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from prism.config import Settings, get_settings
@@ -234,7 +234,6 @@ def create_app() -> FastAPI:
     @app.post("/webhooks/github")
     async def github_webhook(
         request: Request,
-        background_tasks: BackgroundTasks,
         response: Response,
         x_hub_signature_256: str | None = Header(default=None),
         x_github_event: str | None = Header(default=None),
@@ -287,13 +286,15 @@ def create_app() -> FastAPI:
         )
         if settings.redis_url:
             await _enqueue_redis(settings.redis_url, job)
-        else:
-            # Dev mode: no Redis - run inline in the background.
-            log.info("dev_inline_mode")
-            background_tasks.add_task(
-                review_pr, {}, job.installation_id, job.owner, job.repo, job.pr_number
-            )
-        return JSONResponse({"status": "enqueued"})
+            return JSONResponse({"status": "enqueued"})
+        # No Redis (e.g. Vercel serverless): await the review inline.
+        # Starlette BackgroundTasks are not reliable on serverless - the
+        # function can be frozen/suspended after the response is sent,
+        # silently killing the review. Awaiting keeps it in the request
+        # lifecycle; on timeout/failure GitHub redelivers the webhook.
+        log.info("inline_mode_awaiting_review")
+        result = await review_pr({}, job.installation_id, job.owner, job.repo, job.pr_number)
+        return JSONResponse({"status": "reviewed", "result": result})
 
     return app
 
