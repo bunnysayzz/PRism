@@ -94,7 +94,7 @@ def test_index_landing_page_has_install_link(client: TestClient) -> None:
     resp = client.get("/")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    assert "https://github.com/apps/prism-reviews/installations/new" in resp.text
+    assert "https://github.com/apps/prism-reviews-bot/installations/new" in resp.text
     assert "PRism" in resp.text
     assert "How it works" in resp.text
 

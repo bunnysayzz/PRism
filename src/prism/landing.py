@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-INSTALL_URL = "https://github.com/apps/prism-reviews/installations/new"
+INSTALL_URL = "https://github.com/apps/prism-reviews-bot/installations/new"
 SOURCE_URL = "https://github.com/bunnysayzz/PRism"
 DOCS_URL = "https://github.com/bunnysayzz/PRism#readme"
 
