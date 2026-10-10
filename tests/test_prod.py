@@ -90,6 +90,14 @@ def test_healthz_ok(client: TestClient) -> None:
     assert resp.headers.get("X-Request-ID")  # generated when absent
 
 
+def test_index_landing_page_has_install_link(client: TestClient) -> None:
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "https://github.com/apps/prism-reviews/installations/new" in resp.text
+    assert "PRism" in resp.text
+
+
 def test_request_id_echoed(client: TestClient) -> None:
     resp = client.get("/healthz", headers={"X-Request-ID": "req-123"})
     assert resp.headers["X-Request-ID"] == "req-123"

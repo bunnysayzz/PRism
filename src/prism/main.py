@@ -208,37 +208,59 @@ def create_app() -> FastAPI:
 
     @app.get("/")
     async def index() -> HTMLResponse:
-        """Landing page: service status for humans; this URL is an API."""
+        """Landing page: install the App, see how it works, check status."""
         settings = get_settings()
         checks = _check_settings(settings)
         ok = checks["ok"]
         badge = (
-            '<span style="color:#3fb950">● operational</span>'
+            '<span class="badge ok">● operational</span>'
             if ok
-            else '<span style="color:#f85149">● configuration needed</span>'
+            else '<span class="badge warn">● configuration needed</span>'
         )
-        problems = (
-            "".join(f"<li>{p}</li>" for p in checks["problems"])
-            if checks["problems"]
-            else "<li>none</li>"
+        setup = (
+            ""
+            if ok
+            else "<div class='card'><h3>Setup checklist</h3><ul>"
+            + "".join(f"<li>{p}</li>" for p in checks["problems"])
+            + "</ul></div>"
         )
         html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PRism — code review bot</title></head>
-<body style="font-family:system-ui,sans-serif;max-width:640px;margin:4rem auto;padding:0 1rem;line-height:1.6">
+<title>PRism — autonomous code review bot</title>
+<style>
+body{{font-family:system-ui,sans-serif;max-width:680px;margin:0 auto;
+padding:3rem 1.25rem;line-height:1.6;color:#e6edf3;background:#0d1117}}
+h1{{font-size:2.2rem;margin-bottom:.25rem}}
+.sub{{color:#8b949e;margin-top:0}}
+.btn{{display:inline-block;background:#238636;color:#fff;font-weight:600;
+padding:.8rem 1.6rem;border-radius:.5rem;text-decoration:none;margin:1.2rem 0}}
+.btn:hover{{background:#2ea043}}
+.card{{border:1px solid #30363d;border-radius:.5rem;padding:1rem 1.25rem;
+margin:1.5rem 0;background:#161b22}}
+.badge.ok{{color:#3fb950}}.badge.warn{{color:#d29922}}
+ol li{{margin:.4rem 0}}code{{background:#161b22;padding:.15rem .4rem;
+border-radius:.3rem;font-size:.9em}}
+a{{color:#58a6ff}}
+</style></head>
+<body>
 <h1>PRism</h1>
-<p>Autonomous code review bot (GitHub App). {badge}</p>
-<h2>Endpoints</h2>
-<ul>
+<p class="sub">Autonomous code review bot — a fine-tuned LLM that reviews
+every pull request for bugs, vulnerabilities and code smells. {badge}</p>
+<a class="btn" href="https://github.com/apps/prism-reviews/installations/new">
+Install on GitHub</a>
+<div class="card"><h3>How it works</h3><ol>
+<li>Install PRism on your repositories (button above).</li>
+<li>Open a pull request — PRism is notified automatically.</li>
+<li>Get an inline review with severity, category and suggested fixes.</li>
+</ol></div>
+<div class="card"><h3>Endpoints</h3><ul>
 <li><a href="/healthz">/healthz</a> — liveness</li>
 <li><a href="/readyz">/readyz</a> — readiness (JSON)</li>
 <li><code>POST /webhooks/github</code> — GitHub webhook receiver</li>
-</ul>
-<h2>Setup checklist</h2>
-<ul>{problems}</ul>
-<p>Install the app at <a href="https://github.com/apps/prism-reviews">github.com/apps/prism-reviews</a>
-to get automated PR reviews.</p>
+</ul></div>
+{setup}
+<p><a href="https://github.com/bunnysayzz/PRism">Source code</a></p>
 </body></html>"""
         return HTMLResponse(content=html)
 
