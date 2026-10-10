@@ -11,7 +11,7 @@ set -euo pipefail
 
 : "${PORT:?PORT is not set (Heroku provides it on every dyno)}"
 : "${GITHUB_PRIVATE_KEY_PEM:?Set the GITHUB_PRIVATE_KEY_PEM config var with the App private key}"
-: "${FALLBACK_API_KEY:?Set FALLBACK_API_KEY (an OpenAI-compatible API key) — without it the bot posts stub placeholder reviews}"
+: "${FALLBACK_API_KEY:?Set FALLBACK_API_KEY (an OpenAI-compatible API key) - without it the bot posts stub placeholder reviews}"
 
 KEY_PATH=/tmp/prism-private-key.pem
 printf '%s' "$GITHUB_PRIVATE_KEY_PEM" > "$KEY_PATH"

@@ -29,7 +29,7 @@ def fingerprint(finding: Finding) -> str:
     """
     Stable 16-hex-char fingerprint of a finding.
 
-    Uses path + normalized (title + category + explanation head) — NOT the
+    Uses path + normalized (title + category + explanation head) - NOT the
     line number, so a finding that shifts by a few lines after a rebase still
     dedups instead of double-posting.
     """

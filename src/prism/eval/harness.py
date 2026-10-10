@@ -5,7 +5,7 @@ Runs a golden set through the *real* review pipeline
 (``run_case_pipeline``: backend -> confidence gate -> line validation) for
 two backends and compares them:
 
-- **candidate**: the backend under test — ``stub`` replays each case's
+- **candidate**: the backend under test - ``stub`` replays each case's
   ``stub_findings``; ``vllm`` / ``api`` / ``hf_endpoint`` run a real model.
 - **baseline**: ``HeuristicBaseline``, a dumb-but-honest reference that
   flags obvious patterns (``eval(``, ``TODO``, bare ``except:``, ...) in
@@ -227,7 +227,7 @@ class HeuristicBaseline(ReviewBackend):
 
     Extracts the diff from the review prompt, walks added lines with their
     new-file line numbers, and emits one finding per matching rule. It has
-    no model behind it — its score is the floor the real backend must beat.
+    no model behind it - its score is the floor the real backend must beat.
     """
 
     name = "heuristic-baseline"
@@ -706,7 +706,7 @@ def render_markdown(report: BenchmarkReport) -> str:
     c = report.candidate
     verdict = "✅ PASS" if report.passed else "❌ FAIL"
     lines = [
-        f"# PRism benchmark — {report.generated_at}",
+        f"# PRism benchmark - {report.generated_at}",
         "",
         f"golden: `{report.golden_path}` ({report.n_cases} cases) · backend: `{report.backend}`",
         "",

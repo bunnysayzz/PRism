@@ -2,13 +2,13 @@
 SFT instruction formatting: (system, user, assistant) triples.
 
 - ``user``: repo/PR/file context + the diff with new-file line numbers.
-  The human reviewer comment is deliberately NOT included — it is the label
+  The human reviewer comment is deliberately NOT included - it is the label
   source, and it will not exist at inference time.
 - ``assistant``: strict JSON ``{"findings": [Finding, ...]}`` matching
   ``prism.review.schemas.Finding``.
 
 Labels come from two sources:
-  - handcrafted ``finding`` overrides on the sample (validated strictly —
+  - handcrafted ``finding`` overrides on the sample (validated strictly -
     curated data must be exact), or
   - :func:`heuristic_finding_from_comment`, a weak labeler that maps the
     reviewer comment onto the Finding schema (title = first line, category
@@ -36,7 +36,7 @@ log = get_logger(__name__)
 
 SYSTEM_PROMPT = (
     "You are PRism, a senior staff engineer reviewing pull request diffs. "
-    "Report only real, defensible issues — no nitpicks, no praise, no summaries. "
+    "Report only real, defensible issues - no nitpicks, no praise, no summaries. "
     "Output STRICT JSON with this exact shape:\n"
     '{"findings": [{"path": "<repo-relative file path>", '
     '"line": <new-file line number>, '
@@ -53,7 +53,7 @@ _CHARS_PER_TOKEN = 4
 
 _FENCE_RE = re.compile(r"```(?:\w+)?\n(.*?)```", re.DOTALL)
 
-# (category, keywords) — checked in order; first match wins.
+# (category, keywords) - checked in order; first match wins.
 _CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     (
         "security",
@@ -149,7 +149,7 @@ def numbered_diff(patch: str) -> str:
 def build_user_prompt(sample: CleanSample) -> str:
     """Build the model input: context header + numbered diff (no reviewer comment)."""
     return (
-        f"Repository: {sample.repo} — PR #{sample.pr_number}: {sample.pr_title}\n"
+        f"Repository: {sample.repo} - PR #{sample.pr_number}: {sample.pr_title}\n"
         f"File: {sample.path} (language: {sample.language or 'unknown'})\n\n"
         "Review the diff below. The left column shows new-file line numbers "
         '("-" rows are deletions with no new-file line number).\n\n'
@@ -205,7 +205,7 @@ def finding_for_sample(sample: CleanSample) -> tuple[Finding, str]:
     Resolve the label for a sample.
 
     Returns ``(finding, source)`` where source is "handcrafted" or
-    "heuristic". Handcrafted overrides are validated strictly — curated data
+    "heuristic". Handcrafted overrides are validated strictly - curated data
     must match the schema exactly.
     """
     if sample.finding is not None:

@@ -9,10 +9,10 @@ name: training
 # GPU RUNNER REQUIREMENT: the `train` job needs a self-hosted runner with an
 # NVIDIA GPU and the label `gpu` (e.g. `runs-on: [self-hosted, gpu]`).
 # See docs/WORKFLOWS.md for runner setup. If you only have the default
-# GitHub-hosted runners, this job will queue forever — do NOT enable the
+# GitHub-hosted runners, this job will queue forever - do NOT enable the
 # schedule until the GPU runner is online and labeled.
 #
-# Interfaces assumed (other workers building these — see docs/WORKFLOWS.md):
+# Interfaces assumed (other workers building these - see docs/WORKFLOWS.md):
 #   scripts/collect_pr_data.py --repos <csv> --out <dir> [--token-env GH_TOKEN]
 #   scripts/train.py --config configs/train_qlora.yaml
 #   python -m prism.eval.runner --golden ... --backend hf_endpoint --min-f1 ...
@@ -41,7 +41,7 @@ on:
         default: ""
         type: string
   # schedule:
-  #   - cron: "0 2 * * 0"   # weekly Sunday 02:00 UTC — enable after GPU runner is online
+  #   - cron: "0 2 * * 0"   # weekly Sunday 02:00 UTC - enable after GPU runner is online
 
 concurrency:
   group: training
@@ -66,9 +66,9 @@ jobs:
       - name: check interfaces
         run: |
           test -f scripts/collect_pr_data.py || \
-            { echo "::error::scripts/collect_pr_data.py missing — data-collection worker not merged"; exit 1; }
+            { echo "::error::scripts/collect_pr_data.py missing - data-collection worker not merged"; exit 1; }
           test -f "${{ inputs.config }}" || \
-            { echo "::error::${{ inputs.config }} missing — training-config worker not merged"; exit 1; }
+            { echo "::error::${{ inputs.config }} missing - training-config worker not merged"; exit 1; }
       - name: collect PR data
         env:
           GH_TOKEN: ${{ secrets.GH_DATA_TOKEN }}
@@ -87,7 +87,7 @@ jobs:
   train:
     name: qlora fine-tune
     needs: [prepare]
-    # SELF-HOSTED GPU RUNNER — see docs/WORKFLOWS.md ("GPU runner setup").
+    # SELF-HOSTED GPU RUNNER - see docs/WORKFLOWS.md ("GPU runner setup").
     runs-on: [self-hosted, gpu]
     permissions:
       contents: read
@@ -101,7 +101,7 @@ jobs:
       - name: check training script
         run: |
           test -f scripts/train.py || \
-            { echo "::error::scripts/train.py missing — training worker not merged"; exit 1; }
+            { echo "::error::scripts/train.py missing - training worker not merged"; exit 1; }
       - name: install training stack
         run: |
           python -m pip install -U pip
@@ -173,7 +173,7 @@ jobs:
         if: always()
         run: |
           cat > eval-report/MODEL_CARD.md <<'EOF'
-          # PRism adapter — run ${{ github.run_id }}
+          # PRism adapter - run ${{ github.run_id }}
           - Base config: ${{ inputs.config }}
           - Dataset repos: ${{ inputs.dataset_repos }}
           - Eval F1: ${{ steps.parse.outputs.f1 }} (min required: ${{ inputs.min_f1 }})
@@ -227,7 +227,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: adapter-run-${{ github.run_id }}
-          name: "PRism adapter — run ${{ github.run_id }}"
+          name: "PRism adapter - run ${{ github.run_id }}"
           body: |
             Fine-tuned QLoRA adapter passing the golden eval gate.
 
@@ -237,7 +237,7 @@ jobs:
             - Commit: ${{ github.sha }}
 
             Model card: see `MODEL_CARD.md` in the eval report.
-            Registry of record: MLflow model registry (`prism-review`) — register the
+            Registry of record: MLflow model registry (`prism-review`) - register the
             adapter there from the release artifact; see docs/WORKFLOWS.md.
           files: |
             eval-report/MODEL_CARD.md

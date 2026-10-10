@@ -15,7 +15,7 @@ Pipeline per PR:
   7. Dedup against existing bot comments on the PR.
   8. Persist every kept finding to the feedback store.
 
-The engine never posts to GitHub itself — it returns a ReviewResult and the
+The engine never posts to GitHub itself - it returns a ReviewResult and the
 caller (worker) posts via github.reviews.
 """
 
@@ -226,7 +226,7 @@ async def _review_one_file(
 
     try:
         await enrich_with_context(client, owner, repo, base_sha, head_sha, changed)
-    except Exception as exc:  # noqa: BLE001 — context enrichment is best-effort
+    except Exception as exc:  # noqa: BLE001 - context enrichment is best-effort
         log.warning("context_enrich_failed", path=changed.filename, error=str(exc)[:200])
 
     user_prompt = prompts.build_user_prompt(

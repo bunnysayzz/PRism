@@ -2,16 +2,16 @@
 
 Pipeline stages (each a module in this package):
 
-    1. ``collector`` — async GitHub REST collection of PR diffs + inline review
+    1. ``collector`` - async GitHub REST collection of PR diffs + inline review
        comments from public repos. Auth via ``GH_TOKEN``; rate-limit aware;
        idempotent via a checkpoint file.
-    2. ``cleaner``   — filtering (bots, unanchored comments, huge diffs),
+    2. ``cleaner``   - filtering (bots, unanchored comments, huge diffs),
        language detection, unicode normalization, secret redaction.
-    3. ``dedup``     — MinHash/LSH near-duplicate removal on
+    3. ``dedup``     - MinHash/LSH near-duplicate removal on
        (normalized diff + comment text), across repos.
-    4. ``splits``    — deterministic, repo-stratified train/val/test splits
+    4. ``splits``    - deterministic, repo-stratified train/val/test splits
        (no repo appears in two splits) + manifest.
-    5. ``format``    — SFT ``(system, user, assistant)`` triples where the
+    5. ``format``    - SFT ``(system, user, assistant)`` triples where the
        assistant is strict JSON matching the ``Finding`` schema.
 
 Entry point: ``scripts/collect_pr_data.py`` (CLI ``collect-pr-data``).

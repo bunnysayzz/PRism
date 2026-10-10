@@ -96,6 +96,7 @@ def test_index_landing_page_has_install_link(client: TestClient) -> None:
     assert "text/html" in resp.headers["content-type"]
     assert "https://github.com/apps/prism-reviews/installations/new" in resp.text
     assert "PRism" in resp.text
+    assert "How it works" in resp.text
 
 
 def test_request_id_echoed(client: TestClient) -> None:

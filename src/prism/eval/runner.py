@@ -1,7 +1,7 @@
 """
 Golden eval runner.
 
-Loads eval/golden.jsonl — one JSON object per line:
+Loads eval/golden.jsonl - one JSON object per line:
     {"path": ..., "patch": ..., "stub_findings": [...], "expected": [...]}
 
 - stub_findings: what the model under test would output (Finding-shaped dicts).
@@ -74,7 +74,7 @@ class VerdictStubBackend(ReviewBackend):
     Deterministic verifier for eval: verdicts keyed by finding title.
 
     verdicts: {title_substring: (is_real, revised_confidence)}.
-    Unknown titles -> ("false_positive", 0.0) — fail closed, like production.
+    Unknown titles -> ("false_positive", 0.0) - fail closed, like production.
     """
 
     name = "verdict-stub"

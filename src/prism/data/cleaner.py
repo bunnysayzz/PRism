@@ -169,7 +169,7 @@ def normalize_text(text: str) -> str:
     )
 
 
-# (pattern, replacement) — applied in order; all case-insensitive.
+# (pattern, replacement) - applied in order; all case-insensitive.
 _SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # GitHub / Stripe / AWS / Slack / Google tokens with recognizable prefixes.
     (re.compile(r"\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b"), REDACTED),

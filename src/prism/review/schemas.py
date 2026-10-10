@@ -72,7 +72,7 @@ def parse_findings(raw: str | list[dict[str, Any]] | dict[str, Any]) -> list[Fin
     Parse model output into validated Findings.
 
     Accepts a JSON string (possibly wrapped in markdown fences), a list of
-    dicts, or {"findings": [...]}. Invalid entries are skipped, not fatal —
+    dicts, or {"findings": [...]}. Invalid entries are skipped, not fatal -
     one malformed finding must not sink the whole file review.
     """
     data = _extract_json(raw) if isinstance(raw, str) else raw
@@ -104,7 +104,7 @@ def _extract_json(text: str) -> Any:
         if lines and lines[-1].strip().startswith("```"):
             lines = lines[:-1]
         cleaned = "\n".join(lines).strip()
-    # Some models wrap JSON in prose — find the outermost object/array.
+    # Some models wrap JSON in prose - find the outermost object/array.
     start_obj, start_arr = cleaned.find("{"), cleaned.find("[")
     starts = [s for s in (start_obj, start_arr) if s != -1]
     if starts:

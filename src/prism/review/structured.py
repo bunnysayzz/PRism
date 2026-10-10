@@ -21,7 +21,7 @@ validated (possibly []) instead of raising. Rationale: the review engine is
 designed to never raise on reviewable PRs, so a total schema failure
 degrades to "no findings" with a structured error log rather than killing
 the whole PR review. Pass strict=True for fail-fast semantics (raises
-BackendError) — useful in eval harnesses where silent degradation would
+BackendError) - useful in eval harnesses where silent degradation would
 hide regressions.
 """
 
@@ -43,13 +43,13 @@ log = get_logger(__name__)
 _FINDING_SCHEMA_JSON = json.dumps(Finding.model_json_schema(), indent=1)
 
 _SCHEMA_BLOCK = (
-    "\n\nSTRICT OUTPUT SCHEMA — your entire response must be one JSON object "
+    "\n\nSTRICT OUTPUT SCHEMA - your entire response must be one JSON object "
     '{"findings": [...]}. Every finding must validate against this JSON Schema '
     "(no extra top-level keys):\n" + _FINDING_SCHEMA_JSON
 )
 
 # For backends without native JSON mode (no response_format support), the
-# schema instruction alone is not enough — demand bare JSON explicitly.
+# schema instruction alone is not enough - demand bare JSON explicitly.
 _PROMPT_ONLY_SUFFIX = (
     "\nRespond with ONLY the JSON object. No prose before or after it, "
     "no markdown fences, no apologies."
@@ -87,17 +87,17 @@ class ConstrainedReviewBackend(ReviewBackend):
         max_retries: repair retries after a validation failure (default 2).
             Total completion calls are bounded by 1 + max_retries.
         retry_on_empty: also retry when zero findings parse cleanly. Default
-            False — silence is a legitimate review outcome; enable only when
+            False - silence is a legitimate review outcome; enable only when
             the caller has independent signal that findings exist (e.g. an
             eval harness with seeded bugs).
         strict: if True, raise BackendError when retries are exhausted and
             output is still invalid. If False (default), return best-effort
-            findings (possibly []) — see module docstring for rationale.
+            findings (possibly []) - see module docstring for rationale.
         temperature/top_p: forwarded to inner.complete() as kwargs when the
             inner backend accepts them; otherwise recorded in usage metadata.
         price_table: {model_name: (usd_per_1k_input_tokens,
             usd_per_1k_output_tokens)} for cost estimation. No default table
-            is shipped — pass your provider's current pricing, e.g.
+            is shipped - pass your provider's current pricing, e.g.
             {"gpt-4o": (0.005, 0.015)}.
     """
 
@@ -118,7 +118,7 @@ class ConstrainedReviewBackend(ReviewBackend):
             raise ValueError("top_p must be in [0.0, 1.0]")
         self.inner = inner
         self.name = f"constrained:{inner.name}"
-        # Delegated for ReviewResult.model — nicer than "constrained:vllm".
+        # Delegated for ReviewResult.model - nicer than "constrained:vllm".
         self.model = str(getattr(inner, "model", inner.name))
         self._max_retries = max(0, int(max_retries))
         self._retry_on_empty = retry_on_empty
@@ -215,7 +215,7 @@ class ConstrainedReviewBackend(ReviewBackend):
         """
         JSON-mode negotiation: 'json_object' when the inner backend already
         sends response_format={"type": "json_object"} (OpenAI-compatible);
-        otherwise 'prompt_only' — enforced via prompt + post-validation.
+        otherwise 'prompt_only' - enforced via prompt + post-validation.
         """
         if isinstance(self.inner, _OpenAICompatibleBackend):
             return "json_object"
@@ -238,7 +238,7 @@ class ConstrainedReviewBackend(ReviewBackend):
         raw = text or ""
         data = _extract_json(raw)
         # _extract_json() returns {} both for unparseable input and for a
-        # literal "{}" — neither is valid review output (the schema requires
+        # literal "{}" - neither is valid review output (the schema requires
         # {"findings": [...]}), so both are validation errors that trigger
         # the repair path.
         if data == {}:
@@ -265,7 +265,7 @@ class ConstrainedReviewBackend(ReviewBackend):
         """
         Confidence calibration: clamp to [0, 1], quantize to 2 decimals.
 
-        Drops findings with blank title/explanation (defense in depth — the
+        Drops findings with blank title/explanation (defense in depth - the
         schema already enforces min lengths, but this layer logs the drop).
         """
         kept: list[Finding] = []

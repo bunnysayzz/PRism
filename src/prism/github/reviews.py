@@ -15,7 +15,7 @@ Payload shape (exact):
 
 `line` is a line number in the NEW file version (the PR head), and
 `side: "RIGHT"` anchors the comment to the new-file side of the diff.
-GitHub rejects comments on lines that are not part of the diff — the engine
+GitHub rejects comments on lines that are not part of the diff - the engine
 validates every finding line against commentable_lines() before posting.
 """
 
@@ -79,7 +79,7 @@ def render_summary(
         + (
             ", ".join(f"{_SEVERITY_EMOJI.get(s, '')} {s}: {n}" for s, n in sorted(counts.items()))
             if counts
-            else "none — looks clean! 🎉"
+            else "none - looks clean! 🎉"
         ),
         "",
     ]
@@ -93,7 +93,7 @@ def render_summary(
             "",
         ]
     lines.append(
-        "_React 👍/👎 or reply to a comment to train the reviewer — "
+        "_React 👍/👎 or reply to a comment to train the reviewer - "
         "your feedback feeds the retraining loop._"
     )
     return "\n".join(lines)
@@ -151,7 +151,7 @@ async def fetch_existing_review_comments(
     """
     Fetch existing review comments on the PR (for dedup).
 
-    GET /repos/{owner}/{repo}/pulls/{pr_number}/comments — only returns
+    GET /repos/{owner}/{repo}/pulls/{pr_number}/comments - only returns
     comments made by our bot (filtered by the HTML marker).
     """
     comments = await client.paginate(f"/repos/{owner}/{repo}/pulls/{pr_number}/comments")

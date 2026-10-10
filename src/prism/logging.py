@@ -5,7 +5,7 @@ output locally (``LOG_FORMAT=console``).
 
 Secret safety: the ``_redact`` processor masks any log kwarg whose key contains
 a secret-like substring (see :data:`REDACT_SUBSTRINGS`), recursively into
-nested dicts/lists. Never pass a secret as the log *message* itself — the
+nested dicts/lists. Never pass a secret as the log *message* itself - the
 redactor can only see structured keys.
 """
 

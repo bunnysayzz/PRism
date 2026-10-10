@@ -45,7 +45,7 @@ def test_confidence_invalid_defaults():
 
 def test_confidence_out_of_bounds_rejected_at_field_level():
     # Direct model construction still enforces ge/le via the field, but the
-    # before-validator clamps first — document the effective behavior.
+    # before-validator clamps first - document the effective behavior.
     with pytest.raises(ValidationError):
         Finding.model_validate(_finding_dict(line=0))
 

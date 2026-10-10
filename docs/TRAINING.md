@@ -75,7 +75,7 @@ license at <https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct>
 export HF_TOKEN="hf_..."   # read scope is enough; never commit it
 ```
 
-The token is read from the environment only — it never appears in code,
+The token is read from the environment only - it never appears in code,
 configs, or logs. (The team's token is also stored in the Secure Vault
 under `custom.huggingface` for other flows; the training script itself uses
 `HF_TOKEN` from the environment.)
@@ -92,7 +92,7 @@ Training data is JSONL, one record per line:
 ]}
 ```
 
-- `system` is optional — the PRism review system prompt
+- `system` is optional - the PRism review system prompt
   (`prism.review.prompts.SYSTEM_PROMPT`) is prepended when missing.
 - The last message **must** be `assistant` (the strict-JSON target).
 - Malformed records are skipped with a warning (see `format_records`).
@@ -160,7 +160,7 @@ cp -r outputs/prism-qlora-llama3-8b/final-adapter /models/prism-review/v1/
 ```
 
 `train_config.yaml` inside the adapter dir records the exact hyperparams
-and `model_id` the adapter was trained against — the serving loader must
+and `model_id` the adapter was trained against - the serving loader must
 use that same base model id.
 
 ## 8. Expected metrics
@@ -175,7 +175,7 @@ For ~5K samples, 3 epochs, eff. batch 16 (~940 steps):
 | JSON validity (eval benchmark) | > 95 % parseable by `prism.review.schemas.parse_findings` |
 
 Loss is response-only (prompt tokens masked), so absolute values are lower
-than full-sequence LM loss — compare runs against each other, not against
+than full-sequence LM loss - compare runs against each other, not against
 pretraining numbers.
 
 ## 9. Troubleshooting
@@ -189,7 +189,7 @@ pretraining numbers.
 
 **NaN loss**
 - Usually a bad record (e.g. empty assistant message) or LR too high.
-  The data loader drops invalid records and logs counts — check for
+  The data loader drops invalid records and logs counts - check for
   `dropping record` warnings. If NaN appears mid-run, halve
   `learning_rate` and resume from the last good checkpoint.
 
@@ -203,7 +203,7 @@ pretraining numbers.
 **bitsandbytes CUDA errors**
 - `bitsandbytes` was built for a different CUDA toolkit than your driver.
   Reinstall the matching wheel, or set `load_in_4bit: false` (falls back
-  to bf16 full weights — needs ~2× VRAM, likely OOM on 24 GB for 8B).
+  to bf16 full weights - needs ~2× VRAM, likely OOM on 24 GB for 8B).
 
 **MLflow connection refused**
 - Training continues; metrics are just not uploaded. Set

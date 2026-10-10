@@ -54,7 +54,7 @@ def parse_event(headers: dict[str, str], payload: dict[str, Any]) -> ReviewJob |
     Dispatch on X-GitHub-Event + action.
 
     Returns a ReviewJob for pull_request opened/synchronize, else None
-    (ignored cleanly — pings, closed PRs, reviews, etc.).
+    (ignored cleanly - pings, closed PRs, reviews, etc.).
     """
     # Normalize header lookup (case-insensitive).
     lowered = {k.lower(): v for k, v in headers.items()}
@@ -65,7 +65,7 @@ def parse_event(headers: dict[str, str], payload: dict[str, Any]) -> ReviewJob |
 
     action = payload.get("action")
     if (event, action) not in _WATCHED:
-        # NB: `event` is structlog's reserved first arg name — use gh_event.
+        # NB: `event` is structlog's reserved first arg name - use gh_event.
         log.info("webhook_event_ignored", gh_event=event, action=action)
         return None
 

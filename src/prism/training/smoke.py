@@ -9,7 +9,7 @@ Proves the full loop on a machine with no GPU, in well under 5 minutes:
 3. Trains for 5 steps with the real TRL ``SFTTrainer`` (via
    :mod:`prism.training.trainer`, MLflow disabled) on CPU.
 4. Saves the adapter, reloads it onto a fresh base model, and generates
-   tokens — proving the artifact is a working model.
+   tokens - proving the artifact is a working model.
 
 Run: ``python scripts/train.py --smoke`` (or ``PRISM_RUN_SMOKE=1 pytest
 tests/test_training.py -m slow``).

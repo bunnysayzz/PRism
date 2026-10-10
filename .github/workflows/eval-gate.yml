@@ -1,7 +1,7 @@
 name: eval-gate
 
 # Deep quality gate for pull requests: runs the full benchmark harness
-# (src/prism/eval/harness.py) against the golden set — the candidate model
+# (src/prism/eval/harness.py) against the golden set - the candidate model
 # backend runs through the real review pipeline (confidence gate + line
 # validation + matching) and is compared against a heuristic baseline.
 # Fails the build when micro-F1, severity-weighted F1, per-category F1,
@@ -9,7 +9,7 @@ name: eval-gate
 # `workflow_dispatch` allows evaluating a REAL model backend
 # (vllm/api/hf_endpoint) with the matching secrets configured.
 #
-# Note: the stub backend replays canned answers (F1=1.0 by construction) —
+# Note: the stub backend replays canned answers (F1=1.0 by construction) -
 # it guards pipeline integrity (gate/line-validation/matching regressions),
 # not model quality. Real model signal comes from --backend vllm runs.
 

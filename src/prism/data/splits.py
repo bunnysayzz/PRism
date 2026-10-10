@@ -4,7 +4,7 @@ Deterministic, repo-stratified train/val/test splits.
 Stratification is by repository: a repo's samples always land in a single
 split, so the model can never train on one PR of a repo and be evaluated on
 another (repo leakage). Assignment is deterministic for a given seed: repos
-are shuffled with ``random.Random(seed)`` and then greedily assigned —
+are shuffled with ``random.Random(seed)`` and then greedily assigned -
 whole repos go to train until the train target fraction is reached, with the
 last two shuffled repos reserved for val/test so every split is non-empty
 whenever there are >= 3 repos.

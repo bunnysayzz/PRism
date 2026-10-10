@@ -1,6 +1,6 @@
 # PRism sample dataset
 
-`records.jsonl` — 12 handcrafted `RawSample` records (see
+`records.jsonl` - 12 handcrafted `RawSample` records (see
 `src/prism/data/models.py`) used by the pipeline tests and as a smoke-test
 input for the CLI:
 

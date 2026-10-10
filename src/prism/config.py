@@ -121,7 +121,7 @@ class Settings(BaseSettings):
     def redacted(self) -> dict[str, Any]:
         """Return all settings as a dict with secret values masked.
 
-        Safe to log or print for startup diagnostics / debugging — values of
+        Safe to log or print for startup diagnostics / debugging - values of
         any field whose name contains a secret-like substring (secret, token,
         key, password, ...) are replaced with ``***REDACTED***``.
         """

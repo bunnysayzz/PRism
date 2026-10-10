@@ -3,7 +3,7 @@
 A user can configure any number of OpenAI-compatible API providers (API keys)
 as backup via the PRISM_PROVIDERS env var (JSON array). The router builds a
 ChainedBackend that tries each provider in order and fails over to the next
-one when a provider errors — so one dead key or outage doesn't kill reviews.
+one when a provider errors - so one dead key or outage doesn't kill reviews.
 
 Example:
     PRISM_PROVIDERS='[
@@ -17,7 +17,7 @@ Each entry: name (label for logs), preset (optional, fills in base_url),
 base_url (optional if preset given), api_key (required), model (required),
 timeout_s (optional, default 120).
 
-Secrets never appear in logs or /readyz output — only provider names and
+Secrets never appear in logs or /readyz output - only provider names and
 models are exposed.
 """
 

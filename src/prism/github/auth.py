@@ -8,7 +8,7 @@ Flow:
      POST /app/installations/{installation_id}/access_tokens
   3. Cache the token in memory, expiring 60s before GitHub's expiry.
 
-The private key is loaded from a file path (GITHUB_PRIVATE_KEY_PATH) only —
+The private key is loaded from a file path (GITHUB_PRIVATE_KEY_PATH) only -
 never from env contents, never logged.
 """
 

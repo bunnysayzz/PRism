@@ -6,17 +6,17 @@ Collects, from PUBLIC repositories:
   - per-file unified diffs (``patch``),
   - inline review comments anchored to a diff line (path + line).
 
-Output: ``data/raw/raw.jsonl`` — one :class:`RawSample` JSON object per
+Output: ``data/raw/raw.jsonl`` - one :class:`RawSample` JSON object per
 (PR, file, comment) triple. PRs with no inline review comments are skipped
 (the PR list endpoint exposes a ``review_comments`` count, so this costs no
 extra API calls).
 
-Auth: ``GH_TOKEN`` env var — a classic PAT with the ``public_repo`` scope, or
+Auth: ``GH_TOKEN`` env var - a classic PAT with the ``public_repo`` scope, or
 a fine-grained token with read access to public repositories. The token is
 never logged or written to disk.
 
 Rate limits: every response's ``X-RateLimit-Remaining`` /
-``X-RateLimit-Reset`` headers are honored — the client sleeps proactively when
+``X-RateLimit-Reset`` headers are honored - the client sleeps proactively when
 the budget runs low, and backs off until reset on 403/429 (respecting
 ``Retry-After``).
 
@@ -170,7 +170,7 @@ def load_raw_samples(path: str | Path) -> list[RawSample]:
             continue
         try:
             sample = RawSample.model_validate(json.loads(line))
-        except Exception as exc:  # noqa: BLE001 — malformed line: skip, don't fail
+        except Exception as exc:  # noqa: BLE001 - malformed line: skip, don't fail
             skipped += 1
             log.warning("raw_line_skipped", line=lineno, error=str(exc)[:200])
             continue

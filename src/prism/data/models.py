@@ -2,11 +2,11 @@
 Shared pydantic models for the PRism data pipeline.
 
 Record flow:
-    RawSample   — one inline review comment joined with its file's unified diff,
+    RawSample   - one inline review comment joined with its file's unified diff,
                   as collected from the GitHub REST API (collector stage).
-    CleanSample — filtered + normalized + language-tagged (cleaner stage).
+    CleanSample - filtered + normalized + language-tagged (cleaner stage).
                   Deduplicated (dedup stage), then split (splits stage).
-    TrainingRecord — (system, user, assistant) SFT triple (format stage).
+    TrainingRecord - (system, user, assistant) SFT triple (format stage).
                   The assistant is strict JSON: {"findings": [Finding, ...]}
                   matching ``prism.review.schemas.Finding``.
 
@@ -77,7 +77,7 @@ class CleanSample(BaseModel):
 class TrainingRecord(BaseModel):
     """One SFT example: (system, user, assistant) triple.
 
-    The reviewer comment is the *label source*, not model input — it will not
+    The reviewer comment is the *label source*, not model input - it will not
     exist at inference time, so ``user`` contains only the diff. The
     ``assistant`` is strict JSON: {"findings": [Finding, ...]}.
     """

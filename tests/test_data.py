@@ -329,7 +329,7 @@ def test_format_all_sample_findings_validate() -> None:
 
 def test_format_heuristic_finding() -> None:
     body = (
-        "SQL injection here — the user input is concatenated into the query. "
+        "SQL injection here - the user input is concatenated into the query. "
         "This is a serious vulnerability.\n"
         '```python\ncursor.execute("SELECT * FROM t WHERE x = %s", (x,))\n```'
     )

@@ -5,7 +5,7 @@ Review backends: LLM providers behind a common interface.
 - VLLMBackend: OpenAI-compatible chat completions (primary, fine-tuned model),
   requests response_format={"type": "json_object"}.
 - HFEndpointBackend: Hugging Face Inference Endpoint (text-generation style).
-- APIBackend: generic OpenAI-compatible API — also serves as the STRONGER
+- APIBackend: generic OpenAI-compatible API - also serves as the STRONGER
   fallback model for the second-pass verification in the confidence gate.
 
 All backends: httpx with explicit timeouts, structured BackendError types,
@@ -215,7 +215,7 @@ class ChainedBackend(ReviewBackend):
 
     Used for the backup API provider chain: N configured providers are tried
     in order per request, so one dead key, quota exhaustion, or outage
-    doesn't kill the review — the next provider picks it up. If every
+    doesn't kill the review - the next provider picks it up. If every
     provider fails, raises BackendError summarizing each failure.
     """
 

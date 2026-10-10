@@ -1,12 +1,12 @@
 """
 FastAPI app: GitHub webhook receiver.
 
-- POST /webhooks/github — rate-limited (in-memory token bucket, per
+- POST /webhooks/github - rate-limited (in-memory token bucket, per
   installation), HMAC signature verified, event parsed, then enqueued as
   `review_pr` on the arq queue. When REDIS_URL is unset (dev mode), the job
   runs inline as a background task instead of going through Redis.
-- GET /healthz — liveness check (always 200 when the process is up).
-- GET /readyz — readiness check: settings validity, backend probe, Redis ping.
+- GET /healthz - liveness check (always 200 when the process is up).
+- GET /readyz - readiness check: settings validity, backend probe, Redis ping.
   Returns 503 with per-check details when not ready.
 
 Every response carries an ``X-Request-ID`` header (client-supplied value is
@@ -38,6 +38,7 @@ from prism.github.webhooks import (
     parse_event,
     verify_signature,
 )
+from prism.landing import render_landing
 from prism.logging import get_logger, setup_logging
 from prism.worker import review_pr
 
@@ -210,59 +211,7 @@ def create_app() -> FastAPI:
     async def index() -> HTMLResponse:
         """Landing page: install the App, see how it works, check status."""
         settings = get_settings()
-        checks = _check_settings(settings)
-        ok = checks["ok"]
-        badge = (
-            '<span class="badge ok">● operational</span>'
-            if ok
-            else '<span class="badge warn">● configuration needed</span>'
-        )
-        setup = (
-            ""
-            if ok
-            else "<div class='card'><h3>Setup checklist</h3><ul>"
-            + "".join(f"<li>{p}</li>" for p in checks["problems"])
-            + "</ul></div>"
-        )
-        html = f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PRism — autonomous code review bot</title>
-<style>
-body{{font-family:system-ui,sans-serif;max-width:680px;margin:0 auto;
-padding:3rem 1.25rem;line-height:1.6;color:#e6edf3;background:#0d1117}}
-h1{{font-size:2.2rem;margin-bottom:.25rem}}
-.sub{{color:#8b949e;margin-top:0}}
-.btn{{display:inline-block;background:#238636;color:#fff;font-weight:600;
-padding:.8rem 1.6rem;border-radius:.5rem;text-decoration:none;margin:1.2rem 0}}
-.btn:hover{{background:#2ea043}}
-.card{{border:1px solid #30363d;border-radius:.5rem;padding:1rem 1.25rem;
-margin:1.5rem 0;background:#161b22}}
-.badge.ok{{color:#3fb950}}.badge.warn{{color:#d29922}}
-ol li{{margin:.4rem 0}}code{{background:#161b22;padding:.15rem .4rem;
-border-radius:.3rem;font-size:.9em}}
-a{{color:#58a6ff}}
-</style></head>
-<body>
-<h1>PRism</h1>
-<p class="sub">Autonomous code review bot — a fine-tuned LLM that reviews
-every pull request for bugs, vulnerabilities and code smells. {badge}</p>
-<a class="btn" href="https://github.com/apps/prism-reviews/installations/new">
-Install on GitHub</a>
-<div class="card"><h3>How it works</h3><ol>
-<li>Install PRism on your repositories (button above).</li>
-<li>Open a pull request — PRism is notified automatically.</li>
-<li>Get an inline review with severity, category and suggested fixes.</li>
-</ol></div>
-<div class="card"><h3>Endpoints</h3><ul>
-<li><a href="/healthz">/healthz</a> — liveness</li>
-<li><a href="/readyz">/readyz</a> — readiness (JSON)</li>
-<li><code>POST /webhooks/github</code> — GitHub webhook receiver</li>
-</ul></div>
-{setup}
-<p><a href="https://github.com/bunnysayzz/PRism">Source code</a></p>
-</body></html>"""
-        return HTMLResponse(content=html)
+        return HTMLResponse(content=render_landing(_check_settings(settings)))
 
     @app.get("/readyz")
     async def readyz() -> JSONResponse:
@@ -309,7 +258,7 @@ Install on GitHub</a>
                 headers={"Retry-After": str(int(retry_after) + 1)},
             )
 
-        # Signature failure logs context only — never the secret or the digest.
+        # Signature failure logs context only - never the secret or the digest.
         if not verify_signature(settings.github_webhook_secret, body, x_hub_signature_256):
             log.warning(
                 "webhook_bad_signature",
@@ -339,7 +288,7 @@ Install on GitHub</a>
         if settings.redis_url:
             await _enqueue_redis(settings.redis_url, job)
         else:
-            # Dev mode: no Redis — run inline in the background.
+            # Dev mode: no Redis - run inline in the background.
             log.info("dev_inline_mode")
             background_tasks.add_task(
                 review_pr, {}, job.installation_id, job.owner, job.repo, job.pr_number

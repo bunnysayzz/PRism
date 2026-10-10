@@ -27,7 +27,7 @@ RULES
    failure; 0.7-0.9 for likely issues; below 0.7 for suspicions (which you
    should usually not report at all).
 
-OUTPUT FORMAT — strict JSON only, no prose, no markdown fences:
+OUTPUT FORMAT - strict JSON only, no prose, no markdown fences:
 {
   "findings": [
     {

@@ -110,7 +110,7 @@ def format_example(
     """
     Format one record into input_ids/attention_mask/labels.
 
-    The chat template is applied twice — once for the prompt (everything
+    The chat template is applied twice - once for the prompt (everything
     before the assistant message, with the generation prompt appended) and
     once for the full conversation. Prompt token positions get label -100 so
     the loss is computed on the assistant response only.

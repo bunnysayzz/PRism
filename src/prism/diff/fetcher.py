@@ -119,7 +119,7 @@ async def _fetch_blob(client: GitHubClient, owner: str, repo: str, path: str, re
         if isinstance(data, dict) and data.get("encoding") == "base64":
             raw = base64.b64decode(data["content"])
             return raw.decode("utf-8", errors="replace")
-    except Exception as exc:  # noqa: BLE001 — context is best-effort
+    except Exception as exc:  # noqa: BLE001 - context is best-effort
         log.warning("blob_fetch_failed", path=path, ref=ref[:12], error=str(exc)[:200])
     return ""
 

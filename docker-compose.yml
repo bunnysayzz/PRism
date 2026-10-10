@@ -3,7 +3,7 @@
 #   docker compose up --build            # api + worker + redis + mlflow
 #   docker compose --profile serving up  # also start vLLM with the LoRA adapter
 #
-# All secrets come from .env / mounted files — nothing secret is baked into
+# All secrets come from .env / mounted files - nothing secret is baked into
 # images or committed to the repo.
 
 services:

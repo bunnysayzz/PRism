@@ -17,7 +17,7 @@ Format (one JSON object per line in ``eval/golden.jsonl``)::
 Rules:
 
 - ``line`` is a *new-file* line number and must be commentable, i.e. part of
-  the diff (added or context lines — see ``prism.diff.hunks``).
+  the diff (added or context lines - see ``prism.diff.hunks``).
 - ``category`` comes from ``CATEGORIES``; ``severity`` from ``SEVERITIES``.
 - ``stub_findings`` entries must validate as ``prism.review.schemas.Finding``;
   the stub backend replays them verbatim through the real pipeline
@@ -32,11 +32,11 @@ production feedback loop instead of hand-writing 470 more:
 1. Mine ``FeedbackStore``: every reviewed PR logs findings; the second-pass
    verifier verdicts and any human reactions (dismissed / confirmed) label
    them. Verified true positives become positive cases; verifier-rejected or
-   human-dismissed findings become *negative* cases (``"expected": []``) —
+   human-dismissed findings become *negative* cases (``"expected": []``) -
    the set must measure precision, not just recall.
 2. Stratify by category using ``TARGET_DISTRIBUTION`` so rare classes
    (concurrency, security) are not drowned by style nits.
-3. Deduplicate by normalized patch hash (strip whitespace/comments) — near
+3. Deduplicate by normalized patch hash (strip whitespace/comments) - near
    duplicates teach the harness nothing and inflate scores.
 4. Keep the human audit: every mined case gets a one-line human sign-off
    before it lands; re-audit a random 5% sample quarterly for label drift.
@@ -151,7 +151,7 @@ def _validate_case(case: dict[str, object], tag: str, seen_ids: set[str]) -> lis
                 continue
             try:
                 Finding.model_validate(item)
-            except Exception as exc:  # noqa: BLE001 — report, don't raise
+            except Exception as exc:  # noqa: BLE001 - report, don't raise
                 errors.append(f"{tag}: stub_findings[{i}] invalid Finding: {exc}")
     return errors
 

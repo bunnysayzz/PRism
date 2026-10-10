@@ -2,7 +2,7 @@
 Eval metric library for PRism.
 
 Pure functions for scoring review quality against golden cases. No I/O, no
-network, no backend calls — everything here is deterministic math over
+network, no backend calls - everything here is deterministic math over
 findings, which makes it trivially unit-testable.
 
 Matching
@@ -22,7 +22,7 @@ severity-weighted F1. Conventions mirror ``prism.eval.runner``:
 
 False positives
 ---------------
-Reported as ``false_positive_rate = FP / (TP + FP)`` — the fraction of
+Reported as ``false_positive_rate = FP / (TP + FP)`` - the fraction of
 reported findings that were wrong (a.k.a. false discovery rate). A strict
 false-positive rate ``FP / (FP + TN)`` is undefined here because the
 population of "true negatives" (every line the reviewer stayed silent on)
@@ -278,7 +278,7 @@ def false_positive_rate(tp: int, fp: int) -> float:
     Fraction of reported findings that were wrong: FP / (TP + FP).
 
     (Strictly this is the *false discovery rate*. A textbook FPR needs a
-    true-negative population, which is undefined for open-ended detection —
+    true-negative population, which is undefined for open-ended detection -
     see the module docstring. 0.0 when nothing was predicted.)
     """
     return fp / (tp + fp) if (tp + fp) else 0.0

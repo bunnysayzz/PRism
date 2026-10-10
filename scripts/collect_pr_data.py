@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI: collect-pr-data — run the full PRism data pipeline.
+"""CLI: collect-pr-data - run the full PRism data pipeline.
 
 Pipeline: collector -> cleaner -> dedup -> splits -> format.
 
@@ -16,12 +16,12 @@ Usage:
     python scripts/collect_pr_data.py --repos @repos.txt --max-prs 200
 
 Outputs (under --processed):
-    train.jsonl / val.jsonl / test.jsonl — one TrainingRecord per line
-    manifest.json — seed, ratios, per-split counts/repos/sample_ids
+    train.jsonl / val.jsonl / test.jsonl - one TrainingRecord per line
+    manifest.json - seed, ratios, per-split counts/repos/sample_ids
 
 JSONL record formats
 --------------------
-data/raw/raw.jsonl — one RawSample per line (one per anchored review comment):
+data/raw/raw.jsonl - one RawSample per line (one per anchored review comment):
     {"sample_id": "owner/repo#123#src/x.py#c456", "repo": "owner/repo",
      "pr_number": 123, "pr_title": "Fix thing", "path": "src/x.py",
      "patch": "@@ -1,3 +1,4 @@\\n ...", "comment_id": 456,
@@ -30,9 +30,9 @@ data/raw/raw.jsonl — one RawSample per line (one per anchored review comment):
      "comment_original_line": 42, "comment_side": "RIGHT",
      "finding": null}
 
-data/processed/{train,val,test}.jsonl — one TrainingRecord per line:
+data/processed/{train,val,test}.jsonl - one TrainingRecord per line:
     {"system": "You are PRism, ...",
-     "user": "Repository: owner/repo — PR #123: ...\\n```diff\\n...\\n```",
+     "user": "Repository: owner/repo - PR #123: ...\\n```diff\\n...\\n```",
      "assistant": "{\\"findings\\": [{\\"path\\": ..., \\"line\\": ..., ...}]}",
      "meta": {"sample_id": "...", "repo": "owner/repo", "pr_number": 123,
               "path": "src/x.py", "language": "python", "comment_id": 456,
@@ -43,7 +43,7 @@ data/processed/manifest.json:
      "splits": {"train": {"count": N, "repos": [...], "sample_ids": [...]}, ...}}
 
 Environment:
-    GH_TOKEN — required for live collection only (classic PAT with the
+    GH_TOKEN - required for live collection only (classic PAT with the
                `public_repo` scope, or a fine-grained token with read access
                to public repositories). Never pass it as a CLI flag.
 """

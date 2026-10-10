@@ -1,7 +1,7 @@
 [project]
 name = "PRism"
 version = "0.1.0"
-description = "PRism — an autonomous GitHub App that auto-reviews pull requests with a fine-tuned LLM."
+description = "PRism - an autonomous GitHub App that auto-reviews pull requests with a fine-tuned LLM."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

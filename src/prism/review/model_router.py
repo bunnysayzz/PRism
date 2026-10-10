@@ -149,7 +149,7 @@ async def probe_backend(backend: ReviewBackend, timeout_s: float = 10.0) -> Prob
 
     Returns ok=True for any successful complete(); BackendError, timeouts,
     and transport errors return ok=False with the error. Response content
-    is not validated — this probes reachability, not review quality.
+    is not validated - this probes reachability, not review quality.
     """
     start = time.monotonic()
     try:

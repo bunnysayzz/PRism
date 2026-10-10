@@ -1,7 +1,7 @@
 """
 Near-duplicate detection across repos with MinHash + LSH.
 
-Duplicate key: ``(normalized diff patch + normalized comment body)`` — the
+Duplicate key: ``(normalized diff patch + normalized comment body)`` - the
 repo is deliberately excluded so the same review copied across forks (or the
 same snippet reviewed twice) collapses to one sample.
 
