@@ -67,6 +67,8 @@ class ReviewResult(BaseModel):
     usage: dict[str, Any] = Field(default_factory=dict)
     # Files where the model backend itself failed (never silently "clean").
     backend_errors: list[str] = Field(default_factory=list)
+    # Terse model-generated PR walkthrough (polish; None when unavailable).
+    pr_summary: str | None = None
 
 
 def parse_findings(raw: str | list[dict[str, Any]] | dict[str, Any]) -> list[Finding]:

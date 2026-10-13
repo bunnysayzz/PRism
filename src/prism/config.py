@@ -13,7 +13,7 @@ import yaml
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from prism.logging import REDACT_SUBSTRINGS, REDACTED
+from prism.logging import REDACT_SUBSTRINGS, REDACTED, get_logger
 
 
 class Settings(BaseSettings):
@@ -39,12 +39,12 @@ class Settings(BaseSettings):
     # Primary model (vLLM, OpenAI-compatible)
     vllm_base_url: str = Field(default="http://localhost:8000")
     vllm_model: str = Field(default="code-review-llama3-lora")
-    vllm_timeout_s: float = Field(default=120.0)
+    vllm_timeout_s: float = Field(default=40.0)
 
     # Hugging Face Inference Endpoint
     hf_endpoint_url: str = Field(default="")
     hf_token: str = Field(default="")
-    hf_timeout_s: float = Field(default=120.0)
+    hf_timeout_s: float = Field(default=40.0)
 
     # Generic OpenAI-compatible API backend (also used as the stronger fallback)
     fallback_api_base: str = Field(default="https://api.openai.com/v1")
@@ -54,8 +54,8 @@ class Settings(BaseSettings):
     # --- Confidence gate ---
     # >= auto_post -> post directly. [verify, auto_post) -> second-pass verify.
     # < verify -> drop.
-    confidence_auto_post: float = Field(default=0.80, ge=0.0, le=1.0)
-    confidence_verify: float = Field(default=0.55, ge=0.0, le=1.0)
+    confidence_auto_post: float = Field(default=0.90, ge=0.0, le=1.0)
+    confidence_verify: float = Field(default=0.70, ge=0.0, le=1.0)
 
     # --- Limits ---
     max_files_per_pr: int = Field(default=30, gt=0)
@@ -189,7 +189,105 @@ def load_repo_config(path: str | os.PathLike[str] | None = None) -> RepoConfig:
     cfg["categories"] = data.get("categories", {})  # e.g. {"style": false}
     cfg["model_routing"] = data.get("model_routing", {})
     cfg["max_findings_per_file"] = int(data.get("max_findings_per_file", 10))
+    cfg["instructions"] = str(data.get("instructions") or "")
+    cfg["path_instructions"] = {
+        str(k): str(v) for k, v in (data.get("path_instructions") or {}).items()
+    }
+    cfg["confidence_auto_post"] = (
+        float(data["confidence_auto_post"])
+        if data.get("confidence_auto_post") is not None
+        else None
+    )
+    cfg["confidence_verify"] = (
+        float(data["confidence_verify"]) if data.get("confidence_verify") is not None else None
+    )
     return cfg
+
+
+# ---------------------------------------------------------------------------
+# Per-repo (.prism.yml) config merge
+# ---------------------------------------------------------------------------
+
+log = get_logger(__name__)
+
+# review_profile presets: shorthand for the review strictness knobs.
+_REVIEW_PROFILES: dict[str, dict[str, Any]] = {
+    "chill": {
+        "confidence_auto_post": 0.9,
+        "confidence_verify": 0.75,
+        "max_findings_per_file": 5,
+        "severity_threshold": "medium",
+    },
+    "assertive": {
+        "confidence_auto_post": 0.7,
+        "confidence_verify": 0.5,
+        "max_findings_per_file": 15,
+        "severity_threshold": "low",
+    },
+}
+
+# Scalar keys where the repo file wins outright when present (non-None).
+_SCALAR_REPO_WINS = (
+    "severity_threshold",
+    "max_findings_per_file",
+    "instructions",
+    "confidence_auto_post",
+    "confidence_verify",
+)
+
+# Dict keys merged per-key, repo wins on conflicts.
+_DICT_MERGE_KEYS = ("categories", "path_instructions")
+
+
+def merge_repo_config(server: RepoConfig, repo: dict[str, Any]) -> RepoConfig:
+    """Merge a per-repo ``.prism.yml`` dict over the server-side ``RepoConfig``.
+
+    Precedence (highest first):
+      1. Explicit keys in the repo dict (scalars; dicts merged per-key, repo wins).
+      2. ``review_profile`` preset ("chill" / "assertive") for keys not explicit.
+      3. The server config.
+
+    ``ignore_globs`` is the union of both lists, deduped, order preserved
+    (server first). An unknown ``review_profile`` is ignored with a warning.
+    """
+    merged = RepoConfig(server)
+    repo = repo or {}
+
+    for key in _SCALAR_REPO_WINS:
+        value = repo.get(key)
+        if value is not None:
+            merged[key] = value
+    for key in _DICT_MERGE_KEYS:
+        repo_dict = repo.get(key) or {}
+        if isinstance(repo_dict, dict):
+            merged[key] = {**(merged.get(key) or {}), **repo_dict}
+
+    server_globs = list(merged.get("ignore_globs") or [])
+    repo_globs = repo.get("ignore_globs") or []
+    if isinstance(repo_globs, list):
+        seen = set(server_globs)
+        for glob in repo_globs:
+            if glob not in seen:
+                seen.add(glob)
+                server_globs.append(glob)
+    merged["ignore_globs"] = server_globs
+
+    profile = repo.get("review_profile")
+    if profile:
+        preset = _REVIEW_PROFILES.get(str(profile).lower())
+        if preset is None:
+            log.warning(
+                "unknown_review_profile",
+                profile=profile,
+                known=sorted(_REVIEW_PROFILES),
+            )
+        else:
+            for key, value in preset.items():
+                # Explicit repo keys take precedence over the profile.
+                if key not in repo or repo.get(key) is None:
+                    merged[key] = value
+
+    return merged
 
 
 def is_repo_allowed(cfg: RepoConfig, owner: str, repo: str) -> bool:

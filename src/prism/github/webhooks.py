@@ -73,6 +73,22 @@ def parse_event(headers: dict[str, str], payload: dict[str, Any]) -> ReviewJob |
         log.info("webhook_event_ignored", gh_event=event, action=action)
         return None
 
+    # Skip rules: WIP / "do not merge" titles and drafts never get reviewed.
+    # Applied after the _WATCHED check, before building the ReviewJob.
+    pr = payload.get("pull_request") or {}
+    if not isinstance(pr, dict):
+        pr = {}
+    title = str(pr.get("title") or "").lower()
+    if "wip" in title:
+        log.info("webhook_pr_skipped", reason="wip_title", pr_number=pr.get("number"))
+        return None
+    if "do not merge" in title:
+        log.info("webhook_pr_skipped", reason="do_not_merge_title", pr_number=pr.get("number"))
+        return None
+    if pr.get("draft"):
+        log.info("webhook_pr_skipped", reason="draft_pr", pr_number=pr.get("number"))
+        return None
+
     try:
         installation_id = int(payload["installation"]["id"])
         owner = payload["repository"]["owner"]["login"]

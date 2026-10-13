@@ -273,6 +273,16 @@ def build_backend(settings: Any, *, for_verification: bool = False) -> ReviewBac
     if for_verification or settings.review_backend == "api":
         specs = provider_specs_from_env()
         if specs:
+            if for_verification and len(specs) > 1:
+                # Rotate the chain by one for the verifier so it prefers a
+                # different provider/model than the reviewer, reducing shared
+                # bias. Failover still tries every provider in order.
+                specs = specs[1:] + specs[:1]
+                log.info(
+                    "verifier_provider_chain_rotated",
+                    first=specs[0].name,
+                    order=[s.name for s in specs],
+                )
             return ChainedBackend(build_provider_backends(specs))
         return APIBackend(
             settings.fallback_api_base,

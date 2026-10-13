@@ -21,7 +21,7 @@ from datetime import UTC
 import jwt  # PyJWT
 
 from prism.config import Settings
-from prism.github.client import GitHubClient
+from prism.github.client import GitHubAPIError, GitHubClient
 from prism.logging import get_logger
 
 log = get_logger(__name__)
@@ -111,10 +111,23 @@ async def get_installation_token(
     assert client is not None
     try:
         log.info("requesting_installation_token", installation_id=installation_id)
-        data = await client.post(
-            f"/app/installations/{installation_id}/access_tokens",
-            json={"permissions": {"pull_requests": "write", "contents": "read"}},
-        )
+        url = f"/app/installations/{installation_id}/access_tokens"
+        try:
+            data = await client.post(
+                url,
+                json={"permissions": {"pull_requests": "write", "contents": "read"}},
+            )
+        except GitHubAPIError as exc:
+            if exc.status != 422:
+                raise
+            # The app wasn't granted the exact permissions we asked for
+            # (GitHub returns 422). Retry inheriting all granted permissions.
+            log.warning(
+                "token_permissions_fallback",
+                installation_id=installation_id,
+                status=exc.status,
+            )
+            data = await client.post(url, json={})
         token: str = data["token"]
         _token_cache.put(installation_id, token, data["expires_at"])
         return token

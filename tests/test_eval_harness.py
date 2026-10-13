@@ -297,7 +297,7 @@ async def test_accept_all_verifier_echoes_confidence():
     import json
 
     verdict = json.loads(text)
-    assert verdict["verdict"] == "real"
+    assert verdict["verdict"] == "VALID"
     assert verdict["revised_confidence"] == pytest.approx(0.72)
 
 

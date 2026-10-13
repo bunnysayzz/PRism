@@ -53,3 +53,20 @@ def test_dedupe_ignores_non_bot_comments():
     findings = [make_finding(title="Issue A")]
     existing = [{"body": "a human comment without any marker"}]
     assert len(dedupe_against_existing(findings, existing)) == 1
+
+
+def test_fingerprint_ignores_reworded_explanation():
+    # Same issue, LLM reworded the explanation on the next push -> dedup.
+    f1 = make_finding(title="SQL injection", explanation="Tainted user input reaches the query.")
+    f2 = make_finding(
+        title="SQL injection",
+        explanation="Unsanitized data from the request flows into the SQL statement.",
+    )
+    assert fingerprint(f1) == fingerprint(f2)
+
+
+def test_fingerprint_differs_on_title_change_only():
+    # Same explanation, different issue -> distinct findings, both posted.
+    f1 = make_finding(title="SQL injection", explanation="Shared explanation text here.")
+    f2 = make_finding(title="Hardcoded secret", explanation="Shared explanation text here.")
+    assert fingerprint(f1) != fingerprint(f2)

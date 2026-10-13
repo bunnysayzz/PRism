@@ -74,7 +74,7 @@ class VerdictStubBackend(ReviewBackend):
     Deterministic verifier for eval: verdicts keyed by finding title.
 
     verdicts: {title_substring: (is_real, revised_confidence)}.
-    Unknown titles -> ("false_positive", 0.0) - fail closed, like production.
+    Unknown titles -> ("INVALID", 0.0) - fail closed, like production.
     """
 
     name = "verdict-stub"
@@ -86,20 +86,20 @@ class VerdictStubBackend(ReviewBackend):
         lowered = user_prompt.lower()
         for title, (is_real, conf) in self.verdicts.items():
             if title.lower() in lowered:
-                verdict = "real" if is_real else "false_positive"
+                verdict = "VALID" if is_real else "INVALID"
                 return (
                     json.dumps(
                         {
                             "verdict": verdict,
+                            "evidence": "stub verdict",
                             "revised_confidence": conf,
-                            "reason": "stub verdict",
                         }
                     ),
                     {"backend": self.name},
                 )
         return (
             json.dumps(
-                {"verdict": "false_positive", "revised_confidence": 0.0, "reason": "unknown"}
+                {"verdict": "INVALID", "evidence": "unknown title", "revised_confidence": 0.0}
             ),
             {"backend": self.name},
         )

@@ -303,9 +303,9 @@ class AcceptAllVerifier(ReviewBackend):
         match = re.search(r"First-pass confidence: ([0-9.]+)", user_prompt)
         confidence = float(match.group(1)) if match else 0.8
         verdict = {
-            "verdict": "real",
+            "verdict": "VALID",
+            "evidence": "baseline heuristics bypass second-pass verification",
             "revised_confidence": confidence,
-            "reason": "baseline heuristics bypass second-pass verification",
         }
         return json.dumps(verdict), {"backend": self.name}
 

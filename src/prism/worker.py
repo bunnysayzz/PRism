@@ -11,10 +11,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from prism.config import get_settings, is_repo_allowed, load_repo_config
+from prism.config import (
+    get_settings,
+    is_repo_allowed,
+    load_repo_config,
+    merge_repo_config,
+)
 from prism.github import reviews as gh_reviews
 from prism.github.auth import get_installation_token
 from prism.github.client import GitHubClient
+from prism.github.repoconfig import fetch_repo_file_config
 from prism.logging import get_logger, setup_logging
 from prism.review.engine import review_pull_request
 
@@ -38,6 +44,8 @@ async def review_pr(
 
     token = await get_installation_token(settings, installation_id)
     async with GitHubClient(settings, installation_token=token) as client:
+        repo_file_cfg = await fetch_repo_file_config(client, owner, repo)
+        cfg = merge_repo_config(load_repo_config(), repo_file_cfg)
         result = await review_pull_request(settings, cfg, client, owner, repo, pr_number)
         head_sha = await gh_reviews.get_pr_head_sha(client, owner, repo, pr_number)
         summary = gh_reviews.render_summary(
@@ -48,6 +56,7 @@ async def review_pr(
             result.skipped_files,
             result.model,
             result.backend_errors,
+            pr_summary=result.pr_summary,
         )
         # Always post the summary so the PR shows the bot ran; inline comments
         # only when there are findings (empty comments list is valid).

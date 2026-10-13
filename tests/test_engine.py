@@ -5,8 +5,8 @@ import pytest
 from prism.eval.runner import VerdictStubBackend
 from prism.review.engine import apply_confidence_gate, make_finding
 
-AUTO_POST = 0.80
-VERIFY = 0.55
+AUTO_POST = 0.90
+VERIFY = 0.70
 
 
 def _verifier(**verdicts):
@@ -29,7 +29,7 @@ async def test_auto_post_kept_unchanged():
 
 @pytest.mark.asyncio
 async def test_verify_upgraded_kept_with_revised_confidence():
-    f = make_finding(title="Borderline real issue", confidence=0.65)
+    f = make_finding(title="Borderline real issue", confidence=0.75)
     kept = await _gate([f], _verifier(**{"Borderline real issue": (True, 0.72)}))
     assert len(kept) == 1
     assert kept[0].confidence == pytest.approx(0.72)
@@ -37,14 +37,14 @@ async def test_verify_upgraded_kept_with_revised_confidence():
 
 @pytest.mark.asyncio
 async def test_verify_rejected_dropped():
-    f = make_finding(title="Borderline false alarm", confidence=0.65)
+    f = make_finding(title="Borderline false alarm", confidence=0.75)
     kept = await _gate([f], _verifier(**{"Borderline false alarm": (False, 0.2)}))
     assert kept == []
 
 
 @pytest.mark.asyncio
 async def test_verify_unknown_title_fails_closed():
-    f = make_finding(title="Something the stub never heard of", confidence=0.65)
+    f = make_finding(title="Something the stub never heard of", confidence=0.75)
     kept = await _gate([f], _verifier())
     assert kept == []  # unknown -> false_positive -> dropped
 

@@ -19,6 +19,7 @@ deployments, move it to Redis (future work).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
@@ -32,6 +33,7 @@ from fastapi import FastAPI, Header, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from prism.config import Settings, get_settings
+from prism.github.client import GitHubAPIError
 from prism.github.webhooks import (
     EVENT_HEADER,
     SIGNATURE_HEADER,
@@ -40,6 +42,7 @@ from prism.github.webhooks import (
 )
 from prism.landing import render_landing
 from prism.logging import get_logger, setup_logging
+from prism.review.backends import BackendError
 from prism.worker import review_pr
 
 log = get_logger(__name__)
@@ -111,6 +114,32 @@ def _rate_limit_key(payload: dict[str, Any], request: Request) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Sentry (optional error reporting)
+# ---------------------------------------------------------------------------
+
+
+def _init_sentry(settings: Settings) -> bool:
+    """Initialize Sentry error reporting if a DSN is configured.
+
+    Returns True when Sentry was initialized. The import is lazy and guarded
+    so a missing ``sentry-sdk`` package can never crash startup. The DSN
+    value is never logged.
+    """
+    # getattr: config.py owns the sentry_dsn field; tolerate it being absent.
+    dsn = getattr(settings, "sentry_dsn", "") or ""
+    if not str(dsn).strip():
+        return False
+    try:
+        import sentry_sdk
+    except ImportError:
+        log.warning("sentry_sdk_not_installed", detail="sentry-sdk is not installed")
+        return False
+    sentry_sdk.init(dsn=str(dsn).strip(), send_default_pii=False, traces_sample_rate=0.0)
+    log.info("sentry_initialized")
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Readiness probes
 # ---------------------------------------------------------------------------
 
@@ -160,27 +189,56 @@ async def _check_backend(settings: Settings) -> dict[str, Any]:
             }
     if backend == "api":
         # Show provider chain config (names/models only, never secrets) so a
-        # misconfigured model is visible without guessing.
+        # misconfigured model is visible without guessing. Also probe the
+        # first provider's /v1/models endpoint to catch bad keys / dead hosts
+        # before a real review hits them.
         from prism.review.providers import describe_specs, provider_specs_from_env
 
         try:
-            specs = describe_specs(provider_specs_from_env())
+            raw_specs = provider_specs_from_env()
         except Exception as exc:
-            specs = []
             return {
                 "ok": False,
                 "backend": backend,
                 "probed": False,
                 "detail": f"PRISM_PROVIDERS invalid: {exc}",
-                "providers": specs,
+                "providers": [],
             }
-        return {
-            "ok": True,
-            "backend": backend,
-            "probed": False,
-            "detail": f"{len(specs)} provider(s) configured",
-            "providers": specs,
-        }
+        providers = describe_specs(raw_specs)
+        if not raw_specs:
+            return {
+                "ok": True,
+                "backend": backend,
+                "probed": False,
+                "detail": "0 provider(s) configured; nothing to probe",
+                "providers": providers,
+            }
+        first = raw_specs[0]
+        # Normalize like backends.py does: strip a trailing "/v1" so we can
+        # append "/v1/models" exactly once.
+        base = first.base_url.rstrip("/")
+        if base.endswith("/v1"):
+            base = base[: -len("/v1")]
+        url = f"{base}/v1/models"
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.get(url, headers={"Authorization": f"Bearer {first.api_key}"})
+            ok = resp.status_code == 200
+            return {
+                "ok": ok,
+                "backend": backend,
+                "probed": True,
+                "detail": f"GET {url} -> {resp.status_code}",
+                "providers": providers,
+            }
+        except Exception as exc:  # network errors only; type name never includes secrets
+            return {
+                "ok": False,
+                "backend": backend,
+                "probed": True,
+                "detail": f"probe failed: {type(exc).__name__}",
+                "providers": providers,
+            }
     return {
         "ok": True,
         "backend": backend,
@@ -205,11 +263,46 @@ async def _check_redis(redis_url: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Webhook error classification
+# ---------------------------------------------------------------------------
+
+#: GitHub API statuses a retry can never fix.
+_PERMANENT_GITHUB_STATUSES = frozenset({401, 403, 404, 422})
+
+#: Vercel's maxDuration is 60s; cap the inline review so the timeout lands on
+#: our side as asyncio.TimeoutError (-> 500 -> GitHub redelivers) instead of
+#: the function being killed mid-flight.
+INLINE_REVIEW_TIMEOUT_S = 50.0
+
+
+def _webhook_error_status(exc: Exception) -> int:
+    """Map an inline-review failure to the webhook HTTP status.
+
+    500 -> GitHub redelivers (transient: backend failures, rate limits, 5xx,
+    transport errors, timeouts, and anything unclassified). 200 -> absorbed
+    (permanent GitHub errors like 401/403/404/422 that a retry can't fix).
+    A wasted retry is safer than a lost review: dedup makes retries idempotent.
+    """
+    if isinstance(exc, asyncio.TimeoutError):
+        return 500
+    if isinstance(exc, BackendError):
+        return 500
+    if isinstance(exc, GitHubAPIError):
+        status = exc.status
+        if status is None or status == 429 or status >= 500:
+            return 500
+        if status in _PERMANENT_GITHUB_STATUSES:
+            return 200
+    return 500
+
+
+# ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
 
 
 def create_app() -> FastAPI:
+    _init_sentry(_settings)
     app = FastAPI(title="PRism", version="0.1.0")
 
     @app.middleware("http")
@@ -317,23 +410,30 @@ def create_app() -> FastAPI:
         # lifecycle; on timeout/failure GitHub redelivers the webhook.
         log.info("inline_mode_awaiting_review")
         try:
-            result = await review_pr({}, job.installation_id, job.owner, job.repo, job.pr_number)
-        except Exception as exc:  # noqa: BLE001 - webhook must never 500 blind
-            # Return the failure as JSON (no secrets: type + short message).
-            # A bare 500 makes GitHub retry; an explicit error is debuggable.
+            result = await asyncio.wait_for(
+                review_pr({}, job.installation_id, job.owner, job.repo, job.pr_number),
+                timeout=INLINE_REVIEW_TIMEOUT_S,
+            )
+        except Exception as exc:  # noqa: BLE001 - webhook must classify, never crash
+            # Classify the failure: transient (or unknown) -> 500 so GitHub
+            # redelivers; permanent -> 200 with the failure as JSON.
+            # Error bodies never include secrets: type + short message only.
+            status_code = _webhook_error_status(exc)
             log.error(
                 "inline_review_failed",
                 repo=f"{job.owner}/{job.repo}",
                 pr=job.pr_number,
                 error_type=type(exc).__name__,
                 error=str(exc)[:200],
+                http_status=status_code,
             )
             return JSONResponse(
                 {
                     "status": "error",
                     "error_type": type(exc).__name__,
                     "error": str(exc)[:200],
-                }
+                },
+                status_code=status_code,
             )
         return JSONResponse({"status": "reviewed", "result": result})
 

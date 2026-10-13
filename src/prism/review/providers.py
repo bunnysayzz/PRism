@@ -15,7 +15,7 @@ Example:
 
 Each entry: name (label for logs), preset (optional, fills in base_url),
 base_url (optional if preset given), api_key (required), model (required),
-timeout_s (optional, default 120).
+timeout_s (optional, default 40).
 
 Secrets never appear in logs or /readyz output - only provider names and
 models are exposed.
@@ -40,7 +40,7 @@ PROVIDER_PRESETS: dict[str, str] = {
     "openrouter": "https://openrouter.ai/api/v1",
 }
 
-DEFAULT_TIMEOUT_S = 120.0
+DEFAULT_TIMEOUT_S = 40.0
 
 
 @dataclass

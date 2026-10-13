@@ -84,3 +84,30 @@ def test_parse_event_ignored_events():
 def test_parse_event_malformed_payload():
     assert parse_event(_headers(), {"action": "opened"}) is None
     assert parse_event({}, _pr_payload("opened")) is None
+
+
+def _wip_payload(title: str, draft: bool = False) -> dict:
+    payload = _pr_payload("opened")
+    payload["pull_request"]["title"] = title
+    payload["pull_request"]["draft"] = draft
+    return payload
+
+
+def test_parse_event_skips_wip_title():
+    for title in ("WIP: add feature", "[WIP] fix thing", "wip: refactor"):
+        assert parse_event(_headers(), _wip_payload(title)) is None
+
+
+def test_parse_event_skips_do_not_merge_title():
+    for title in ("DO NOT MERGE yet", "do not merge: needs review"):
+        assert parse_event(_headers(), _wip_payload(title)) is None
+
+
+def test_parse_event_skips_draft():
+    assert parse_event(_headers(), _wip_payload("Add feature", draft=True)) is None
+
+
+def test_parse_event_reviews_normal_opened_pr():
+    job = parse_event(_headers(), _wip_payload("Add feature", draft=False))
+    assert job is not None
+    assert job.pr_number == 42

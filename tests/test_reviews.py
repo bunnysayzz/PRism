@@ -73,3 +73,81 @@ def test_render_summary_backend_errors_with_findings():
     summary = reviews.render_summary("o", "r", 1, findings, [], "vllm", ["b.py: timeout"])
     assert "high: 1" in summary
     assert "were not reviewed" in summary
+
+
+def test_render_finding_body_short_code_suggestion_uses_suggestion_fence():
+    f = make_finding(
+        suggestion="name = escape(name)",
+        explanation="Unescaped user input is rendered as HTML.",
+    )
+    body = reviews.render_finding_body(f)
+    assert "```suggestion" in body
+    assert "name = escape(name)" in body
+
+
+def test_render_finding_body_long_suggestion_keeps_language_fence():
+    from prism.review.schemas import Finding
+
+    suggestion = "\n".join(f"x{i} = compute({i});" for i in range(13))
+    f = Finding(
+        path="a.py",
+        line=1,
+        severity="medium",
+        category="correctness",
+        title="Long fix needed here",
+        explanation="The replacement spans many lines of code here.",
+        suggestion=suggestion,
+        language_hint="python",
+        confidence=0.9,
+    )
+    body = reviews.render_finding_body(f)
+    assert "```suggestion" not in body
+    assert "```python" in body
+    assert suggestion in body
+
+
+def test_render_finding_body_prose_suggestion_keeps_language_fence():
+    from prism.review.schemas import Finding
+
+    f = Finding(
+        path="a.py",
+        line=1,
+        severity="low",
+        category="style",
+        title="Style nit picked up",
+        explanation="This block could be more readable overall.",
+        suggestion="Consider extracting this logic into a small helper function "
+        "to improve readability and keep the enclosing block short.",
+        confidence=0.8,
+    )
+    body = reviews.render_finding_body(f)
+    assert "```suggestion" not in body
+    assert "Suggested fix:" in body
+
+
+def test_render_finding_body_empty_suggestion_no_block():
+    f = make_finding(suggestion="", explanation="Unescaped user input is rendered as HTML.")
+    body = reviews.render_finding_body(f)
+    assert "Suggested fix:" not in body
+    assert "```" not in body
+
+
+def test_render_summary_with_pr_summary():
+    summary = reviews.render_summary(
+        "o", "r", 1, [], [], "vllm", pr_summary="Adds retries to the webhook handler."
+    )
+    assert "<details><summary>PR summary</summary>" in summary
+    assert "Adds retries to the webhook handler." in summary
+    # Placed right after the bot marker, before the review heading.
+    assert summary.index("PR summary") < summary.index("## PRism review")
+    assert summary.index("<!-- PRism -->") < summary.index("PR summary")
+
+
+def test_render_summary_without_pr_summary():
+    summary = reviews.render_summary("o", "r", 1, [], [], "vllm")
+    assert "PR summary" not in summary
+
+
+def test_render_summary_with_none_pr_summary():
+    summary = reviews.render_summary("o", "r", 1, [], [], "vllm", pr_summary=None)
+    assert "PR summary" not in summary

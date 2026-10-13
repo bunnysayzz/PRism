@@ -1,7 +1,7 @@
 """
 Dedup: avoid re-posting findings that are already on the PR.
 
-fingerprint(finding) = sha256(path + normalized context + category).
+fingerprint(finding) = sha256(path + category + normalized title).
 dedupe_against_existing() drops findings whose fingerprint already appears in
 the bodies of existing bot comments (the fingerprint is embedded in a hidden
 HTML comment when rendering, so exact re-detection is cheap).
@@ -29,16 +29,17 @@ def fingerprint(finding: Finding) -> str:
     """
     Stable 16-hex-char fingerprint of a finding.
 
-    Uses path + normalized (title + category + explanation head) - NOT the
-    line number, so a finding that shifts by a few lines after a rebase still
-    dedups instead of double-posting.
+    Uses path + category + normalized title - deliberately NOT the
+    LLM-generated explanation (reworded explanations of the same issue
+    dedup instead of reposting) and NOT the line number (a finding that
+    shifts by a few lines after a rebase still dedups instead of
+    double-posting).
     """
     basis = "|".join(
         [
             finding.path.strip().lower(),
             finding.category.strip().lower(),
             _normalize(finding.title),
-            _normalize(finding.explanation)[:200],
         ]
     )
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]

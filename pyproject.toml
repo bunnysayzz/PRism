@@ -18,6 +18,7 @@ dependencies = [
     "pyyaml>=6.0",
     "arq>=0.26",
     "redis>=5.0",
+    "sentry-sdk>=2.0",
     "structlog>=24.1",
 ]
 
@@ -25,6 +26,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
     "ruff>=0.5",
     "mypy>=1.10",
     "httpx",

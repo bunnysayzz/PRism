@@ -40,7 +40,7 @@ jobs:
       - run: mypy src
 
   test:
-    name: pytest
+    name: pytest + coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,7 +49,13 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
       - run: pip install -e ".[dev]"
-      - run: python -m pytest -q
+      # The coverage floor is pinned to the measured baseline (74%); the build
+      # fails if coverage drops below it. Raise the floor as new tests land.
+      - run: python -m pytest -q --cov=prism --cov-report=term-missing --cov-report=xml --cov-fail-under=74
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
 
   eval-gate:
     name: eval gate (golden F1)

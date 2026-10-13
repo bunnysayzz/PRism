@@ -54,7 +54,7 @@ def test_parse_preset_resolves_base_url():
     s = specs[0]
     assert s.base_url == "https://agentrouter-5c61ba90b667.herokuapp.com/v1"
     assert s.model == "deepseek/deepseek-v4-flash"
-    assert s.timeout_s == 120.0
+    assert s.timeout_s == 40.0
 
 
 def test_parse_explicit_base_url_and_timeout():

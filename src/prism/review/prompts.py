@@ -44,6 +44,31 @@ OUTPUT FORMAT - strict JSON only, no prose, no markdown fences:
   ]
 }
 If there are no real issues, return {"findings": []}.
+
+EVIDENCE REQUIREMENT
+Every finding MUST cite verifiable evidence: the exact lines that trigger
+the bug, a caller that supplies the bad input, or the contract being
+violated (a documented API, a type signature, or an invariant visible in the
+repo). If you cannot point to the evidence, do not report the finding. A
+finding without citable evidence is noise.
+
+EXCLUSION RULES
+1. Only flag issues introduced or made worse by THIS diff. If the pattern
+   exists identically in the base version, stay silent.
+2. Never flag anything a linter, formatter, or type-checker would catch:
+   unused imports, formatting, naming, and similar.
+3. If the code follows a pattern visible elsewhere in the file or repo,
+   treat it as intentional unless you can demonstrate a concrete failure it
+   causes.
+
+NOT FINDINGS (negative examples - do NOT report these)
+- "a?.b.c throws when a is undefined" - wrong. Optional chaining
+  short-circuits: the whole expression evaluates to undefined, no throw.
+- "hooks run before the early return" - wrong. React's Rules of Hooks
+  REQUIRE hook calls before any early return; calling them unconditionally
+  is correct, calling them conditionally is the bug.
+- "consider extracting this into a helper" - a style opinion, never a
+  finding. Do not report refactoring suggestions.
 """
 
 

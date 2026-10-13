@@ -5,15 +5,18 @@ Pipeline per PR:
   1. Fetch PR metadata (base/head SHAs) + changed files.
   2. Filter files (ignore globs, binary, size caps, max files).
   3. Per file (bounded concurrency): build prompt -> primary backend -> findings.
-  4. Confidence gate per finding:
+  4. Secret scan: deterministic scan of every file's patch for leaked
+     credentials; findings enter the pipeline at confidence 1.0.
+  5. Confidence gate per finding:
        confidence >= auto_post        -> keep as-is
        verify <= confidence < auto    -> second-pass verify via stronger model
        confidence < verify            -> drop
-  5. Validate finding lines against commentable_lines() of the file's patch
+  6. Validate finding lines against commentable_lines() of the file's patch
      (drop off-diff lines; clamp to the nearest commentable line when close).
-  6. Filter by severity threshold + disabled categories.
-  7. Dedup against existing bot comments on the PR.
-  8. Persist every kept finding to the feedback store.
+  7. Filter by severity threshold + disabled categories.
+  8. Dedup against existing bot comments on the PR.
+  9. One extra model call: terse PR walkthrough stored on ReviewResult.
+  10. Persist every kept finding to the feedback store.
 
 The engine never posts to GitHub itself - it returns a ReviewResult and the
 caller (worker) posts via github.reviews.
@@ -22,6 +25,7 @@ caller (worker) posts via github.reviews.
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -42,6 +46,7 @@ from prism.review import prompts
 from prism.review.backends import BackendError, ReviewBackend, build_backend
 from prism.review.dedup import dedupe_against_existing
 from prism.review.schemas import Finding, ReviewResult, Severity
+from prism.review.secrets import scan_patches
 
 if TYPE_CHECKING:
     from prism.github.client import GitHubClient
@@ -49,13 +54,19 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 VERIFY_SYSTEM_PROMPT = """\
-You are a strict verification judge. You are given a code finding from a first-pass
-reviewer and the surrounding diff. Answer ONLY with strict JSON:
-{"verdict": "real" | "false_positive",
- "revised_confidence": <float 0.0-1.0>,
- "reason": "<one sentence>"}
-A finding is "real" only if you can describe the concrete failure it causes.
-When in doubt, say "false_positive".
+You are an adversarial defense engineer. Your job is to INVALIDATE the finding
+by finding counter-evidence in the provided code. You are rewarded for correct
+invalidations, not agreement. Return exactly one verdict:
+- VALID: the issue is real; cite the triggering lines.
+- INVALID: the finding is wrong; cite the specific file:line that disproves it.
+- AMBIGUOUS: you cannot decide from the code alone; state the one question a
+  human must answer.
+
+Respond with strict JSON only:
+{"verdict": "VALID" | "INVALID" | "AMBIGUOUS",
+ "evidence": "<cited lines>",
+ "revised_confidence": <float 0.0-1.0>}
+Do not hedge.
 """
 
 
@@ -87,8 +98,10 @@ async def verify_finding(
     """
     Second-pass verification with the stronger model.
 
-    Returns (is_real, revised_confidence). Fail closed: backend errors or
-    unparseable verdicts count as "not verified" and the finding is dropped.
+    The verifier is an adversarial defense engineer: only a VALID verdict keeps
+    the finding (confidence replaced by the revised value). INVALID and
+    AMBIGUOUS verdicts drop it. Fail closed: backend errors or unparseable
+    verdicts count as "not verified" and the finding is dropped.
     """
     user_prompt = (
         f"File: {finding.path}, line {finding.line}\n"
@@ -97,21 +110,30 @@ async def verify_finding(
         f"Title: {finding.title}\nExplanation: {finding.explanation}\n"
         f"Suggestion: {finding.suggestion or '(none)'}\n\n"
         f"Diff context:\n```diff\n{hunk_context}\n```\n"
-        "Is this a real issue? Respond with strict JSON only."
+        "Invalidate this finding if you can. Respond with strict JSON only."
     )
     try:
         text, _ = await verifier.complete(VERIFY_SYSTEM_PROMPT, user_prompt)
         verdict = json.loads(_strip_fences(text))
-        is_real = verdict.get("verdict") == "real"
+        decision = str(verdict.get("verdict", "")).strip().upper()
         revised = float(verdict.get("revised_confidence", 0.0))
         revised = max(0.0, min(1.0, revised))
+        if decision == "VALID":
+            log.info(
+                "finding_verified",
+                path=finding.path,
+                line=finding.line,
+                revised_confidence=revised,
+                evidence=str(verdict.get("evidence", ""))[:200],
+            )
+            return True, revised
         log.info(
-            "finding_verified" if is_real else "finding_rejected",
+            "finding_rejected",
             path=finding.path,
             line=finding.line,
-            revised_confidence=revised,
+            verdict=decision or "missing",
         )
-        return is_real, revised
+        return False, 0.0
     except (BackendError, ValueError, KeyError, TypeError, AttributeError) as exc:
         log.warning("verify_failed_closed", error=str(exc)[:200])
         return False, 0.0
@@ -138,22 +160,19 @@ async def apply_confidence_gate(
     Route each finding through the confidence gate.
 
     - >= auto_post: kept, confidence unchanged.
-    - [verify_threshold, auto_post): re-asked to the stronger verifier model.
-      Kept only if the verifier says "real"; confidence replaced by the
-      revised value (must still be >= verify_threshold or it is dropped).
+    - [verify_threshold, auto_post): re-asked to the stronger verifier model
+      (batched via asyncio.gather). Kept only if the verifier returns VALID;
+      confidence replaced by the revised value (must still be >=
+      verify_threshold or it is dropped).
     - < verify_threshold: dropped.
     """
-    kept: list[Finding] = []
-    for finding in findings:
+    kept: list[tuple[int, Finding]] = []
+    to_verify: list[tuple[int, Finding]] = []
+    for idx, finding in enumerate(findings):
         if finding.confidence >= auto_post:
-            kept.append(finding)
+            kept.append((idx, finding))
         elif finding.confidence >= verify_threshold:
-            context = hunk_contexts.get(finding.path, "")
-            is_real, revised = await verify_finding(verifier, finding, context)
-            if is_real and revised >= verify_threshold:
-                kept.append(finding.model_copy(update={"confidence": revised}))
-            else:
-                log.info("finding_dropped_by_verifier", path=finding.path, line=finding.line)
+            to_verify.append((idx, finding))
         else:
             log.info(
                 "finding_dropped_low_confidence",
@@ -161,7 +180,65 @@ async def apply_confidence_gate(
                 line=finding.line,
                 confidence=finding.confidence,
             )
-    return kept
+
+    async def _verify_one(finding: Finding) -> Finding | None:
+        context = hunk_contexts.get(finding.path, "")
+        is_real, revised = await verify_finding(verifier, finding, context)
+        if is_real and revised >= verify_threshold:
+            return finding.model_copy(update={"confidence": revised})
+        log.info("finding_dropped_by_verifier", path=finding.path, line=finding.line)
+        return None
+
+    # Batch the verify-band calls concurrently; gather preserves input order.
+    verified = await asyncio.gather(*(_verify_one(f) for _, f in to_verify))
+    for (idx, _), result in zip(to_verify, verified, strict=True):
+        if result is not None:
+            kept.append((idx, result))
+
+    kept.sort(key=lambda item: item[0])
+    return [finding for _, finding in kept]
+
+
+# ---------------------------------------------------------------------------
+# PR summary
+# ---------------------------------------------------------------------------
+
+SUMMARY_SYSTEM_PROMPT = """\
+You are summarizing a pull request for reviewers. Output strict JSON:
+{"summary": "<2-4 sentences: what changed and why, file overview>"}
+No mermaid, no diagrams, no bullet bloat.
+"""
+
+
+async def generate_pr_summary(
+    backend: ReviewBackend,
+    file_summaries: list[str],
+    max_chars: int = 4000,
+) -> str | None:
+    """
+    One extra model call producing a terse PR walkthrough.
+
+    file_summaries: "path: first 400 chars of patch" lines. Never raises and
+    never breaks the review: on backend errors or unparseable output it logs
+    and returns None (the summary is polish).
+    """
+    if not file_summaries:
+        return None
+    body = "\n".join(file_summaries)[:max_chars]
+    try:
+        text, _ = await backend.complete(
+            SUMMARY_SYSTEM_PROMPT,
+            "Summarize this pull request for reviewers.\n\nChanged files:\n" + body,
+        )
+        data = json.loads(_strip_fences(text))
+        summary = data.get("summary")
+        if not isinstance(summary, str) or not summary.strip():
+            log.warning("pr_summary_unparseable")
+            return None
+        return summary.strip()
+    except (BackendError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        log.warning("pr_summary_failed", error=str(exc)[:200])
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +305,7 @@ async def _review_one_file(
     repo: str,
     base_sha: str,
     head_sha: str,
+    system_prompt: str | None = None,
 ) -> list[Finding]:
     changed = plan.changed
     # The full patch is the primary diff signal (hunks carry line numbers);
@@ -246,8 +324,13 @@ async def _review_one_file(
         base_excerpt=changed.base_excerpt,
         max_findings=int(cfg.get("max_findings_per_file", 10)),
     )
+    # Per-path repo instructions (glob -> text), appended verbatim.
+    path_instructions = cfg.get("path_instructions", {}) or {}
+    for glob, text in path_instructions.items():
+        if fnmatch.fnmatch(changed.filename, glob):
+            user_prompt += f"\n\n## Instructions for this file\n{text}"
     try:
-        findings, usage = await primary.analyze(prompts.SYSTEM_PROMPT, user_prompt)
+        findings, usage = await primary.analyze(system_prompt or prompts.SYSTEM_PROMPT, user_prompt)
     except BackendError as exc:
         # Fail LOUD, never silent: an exception here means the model did not
         # run. Returning [] would post a fake "looks clean" review.
@@ -314,19 +397,48 @@ async def review_pull_request(
     # Bounded concurrency over files.
     semaphore = asyncio.Semaphore(settings.max_concurrent_files)
     backend_errors: list[str] = []
+    failed_paths: set[str] = set()
+
+    # Repo-level review instructions thread into the system prompt; per-path
+    # instructions are applied per file inside _review_one_file.
+    instructions = str(cfg.get("instructions") or "")
+    system_prompt = prompts.SYSTEM_PROMPT + (
+        "\n\n## Repository review instructions\n" + instructions if instructions else ""
+    )
 
     async def _guarded(plan: _FilePlan) -> list[Finding]:
         async with semaphore:
             try:
                 return await _review_one_file(
-                    plan, primary, cfg, settings, client, owner, repo, base_sha, head_sha
+                    plan,
+                    primary,
+                    cfg,
+                    settings,
+                    client,
+                    owner,
+                    repo,
+                    base_sha,
+                    head_sha,
+                    system_prompt=system_prompt,
                 )
             except _FileBackendError as exc:
                 backend_errors.append(f"{exc.path}: {exc.error}")
+                failed_paths.add(exc.path)
                 return []
 
     per_file = await asyncio.gather(*(_guarded(p) for p in plans))
     findings: list[Finding] = [f for group in per_file for f in group]
+
+    # Deterministic secret scan over every file's patch, before the
+    # confidence gate. Findings carry confidence 1.0 so they auto-post, but
+    # still go through line validation and dedup like everything else.
+    secret_findings = scan_patches([(p.changed.filename, p.changed.patch or "") for p in plans])
+    log.info("secrets_scanned", findings=len(secret_findings))
+    findings.extend(secret_findings)
+
+    # Per-PR confidence overrides fall back to the global settings.
+    auto_post = float(cfg.get("confidence_auto_post") or settings.confidence_auto_post)
+    verify_threshold = float(cfg.get("confidence_verify") or settings.confidence_verify)
 
     # Confidence gate (needs hunk context per path for the verifier).
     hunk_contexts = {p.changed.filename: (p.changed.patch or "") for p in plans}
@@ -334,9 +446,18 @@ async def review_pull_request(
         findings,
         verifier,
         hunk_contexts,
-        settings.confidence_auto_post,
-        settings.confidence_verify,
+        auto_post,
+        verify_threshold,
     )
+
+    # Terse PR walkthrough (polish only): needs at least one successfully
+    # reviewed file; a fully failed run is catastrophic, not summarizable.
+    file_summaries = [
+        f"{p.changed.filename}: {(p.changed.patch or '')[:400]}"
+        for p in plans
+        if p.changed.filename not in failed_paths
+    ]
+    pr_summary = await generate_pr_summary(primary, file_summaries) if file_summaries else None
 
     # Line validation, severity threshold, disabled categories.
     findings = validate_finding_lines(findings, {p.changed.filename: p.commentable for p in plans})
@@ -356,6 +477,7 @@ async def review_pull_request(
         skipped_files=skipped,
         model=getattr(primary, "model", primary.name),
         backend_errors=backend_errors,
+        pr_summary=pr_summary,
     )
     feedback.log_review(owner, repo, pr_number, result)
     log.info(

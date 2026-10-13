@@ -21,6 +21,7 @@ validates every finding line against commentable_lines() before posting.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from prism.logging import get_logger
@@ -34,6 +35,30 @@ log = get_logger(__name__)
 
 _BOT_MARKER = "<!-- PRism -->"
 
+# Max lines for a suggestion to qualify as a drop-in ```suggestion block.
+_SUGGESTION_MAX_LINES = 12
+
+
+def _looks_like_code(text: str) -> bool:
+    """True when the text reads as code rather than prose.
+
+    Prose suggestions get the language-fenced treatment; code-shaped ones
+    are candidates for GitHub's one-click ```suggestion blocks.
+    """
+    return bool(re.search(r"[{}()\[\]=;<>]", text))
+
+
+def _is_drop_in_suggestion(suggestion: str) -> bool:
+    """Heuristic: is the suggestion a drop-in replacement for the flagged lines?"""
+    if not suggestion or not suggestion.strip():
+        return False
+    lines = suggestion.splitlines()
+    if len(lines) > _SUGGESTION_MAX_LINES:
+        return False
+    if "```" in suggestion:
+        return False  # would break the fence
+    return _looks_like_code(suggestion)
+
 
 def render_finding_body(finding: Finding) -> str:
     """Render one finding as review-comment markdown."""
@@ -46,8 +71,12 @@ def render_finding_body(finding: Finding) -> str:
         finding.explanation,
     ]
     if finding.suggestion:
-        fence = f"```{finding.language_hint or ''}".rstrip()
-        parts += ["", "Suggested fix:", "", fence, finding.suggestion, "```"]
+        if _is_drop_in_suggestion(finding.suggestion):
+            # GitHub renders a one-click "Commit suggestion" button.
+            parts += ["", "Suggested fix:", "", "```suggestion", finding.suggestion, "```"]
+        else:
+            fence = f"```{finding.language_hint or ''}".rstrip()
+            parts += ["", "Suggested fix:", "", fence, finding.suggestion, "```"]
     parts += ["", f"_confidence: {finding.confidence:.2f}_"]
     return "\n".join(parts)
 
@@ -60,6 +89,7 @@ def render_summary(
     skipped_files: list[str],
     model: str,
     backend_errors: list[str] | None = None,
+    pr_summary: str | None = None,
 ) -> str:
     errors = backend_errors or []
     counts: dict[str, int] = {}
@@ -67,6 +97,17 @@ def render_summary(
         counts[f.severity.value] = counts.get(f.severity.value, 0) + 1
     lines = [
         _BOT_MARKER,
+    ]
+    if pr_summary:
+        lines += [
+            "<details><summary>PR summary</summary>",
+            "",
+            pr_summary,
+            "",
+            "</details>",
+            "",
+        ]
+    lines += [
         "## PRism review",
         "",
     ]
