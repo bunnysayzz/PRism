@@ -4,7 +4,11 @@ Review engine: orchestrates the whole PR review.
 Pipeline per PR:
   1. Fetch PR metadata (base/head SHAs) + changed files.
   2. Filter files (ignore globs, binary, size caps, max files).
-  3. Per file (bounded concurrency): build prompt -> primary backend -> findings.
+  3. Per file (bounded concurrency): build prompt -> primary backend ->
+     findings. General review always runs; test files additionally get a
+     bounded test-scrutiny lens pass, and non-test files with a non-trivial
+     patch get security + logic lens passes. Lens findings merge and
+     cross-lens dedupe before the confidence gate.
   4. Secret scan: deterministic scan of every file's patch for leaked
      credentials; findings enter the pipeline at confidence 1.0.
   5. Confidence gate per finding:
@@ -27,10 +31,12 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import json
+import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from prism.config import RepoConfig, Settings, is_category_enabled
+from prism.config import RepoConfig, Settings, build_team_standards, is_category_enabled
 from prism.diff.fetcher import (
     ChangedFile,
     enrich_with_context,
@@ -94,6 +100,7 @@ async def verify_finding(
     verifier: ReviewBackend,
     finding: Finding,
     hunk_context: str,
+    call_sites: str = "",
 ) -> tuple[bool, float]:
     """
     Second-pass verification with the stronger model.
@@ -102,6 +109,9 @@ async def verify_finding(
     the finding (confidence replaced by the revised value). INVALID and
     AMBIGUOUS verdicts drop it. Fail closed: backend errors or unparseable
     verdicts count as "not verified" and the finding is dropped.
+
+    call_sites: optional "path" lines of known usages of the changed symbol
+    (from code search); helps the verifier judge real-world impact.
     """
     user_prompt = (
         f"File: {finding.path}, line {finding.line}\n"
@@ -110,8 +120,10 @@ async def verify_finding(
         f"Title: {finding.title}\nExplanation: {finding.explanation}\n"
         f"Suggestion: {finding.suggestion or '(none)'}\n\n"
         f"Diff context:\n```diff\n{hunk_context}\n```\n"
-        "Invalidate this finding if you can. Respond with strict JSON only."
     )
+    if call_sites:
+        user_prompt += f"\nKnown call sites / usages:\n{call_sites}\n"
+    user_prompt += "Invalidate this finding if you can. Respond with strict JSON only."
     try:
         text, _ = await verifier.complete(VERIFY_SYSTEM_PROMPT, user_prompt)
         verdict = json.loads(_strip_fences(text))
@@ -155,6 +167,7 @@ async def apply_confidence_gate(
     hunk_contexts: dict[str, str],
     auto_post: float,
     verify_threshold: float,
+    call_site_fetcher: Callable[[Finding], Awaitable[str]] | None = None,
 ) -> list[Finding]:
     """
     Route each finding through the confidence gate.
@@ -165,6 +178,9 @@ async def apply_confidence_gate(
       confidence replaced by the revised value (must still be >=
       verify_threshold or it is dropped).
     - < verify_threshold: dropped.
+
+    call_site_fetcher: optional async hook returning known call sites for a
+    finding; fed to the verifier as extra context. Never breaks verification.
     """
     kept: list[tuple[int, Finding]] = []
     to_verify: list[tuple[int, Finding]] = []
@@ -183,7 +199,13 @@ async def apply_confidence_gate(
 
     async def _verify_one(finding: Finding) -> Finding | None:
         context = hunk_contexts.get(finding.path, "")
-        is_real, revised = await verify_finding(verifier, finding, context)
+        call_sites = ""
+        if call_site_fetcher is not None:
+            try:
+                call_sites = await call_site_fetcher(finding)
+            except Exception as exc:  # noqa: BLE001 - search must never break verification
+                log.warning("call_site_fetch_failed", error=str(exc)[:200])
+        is_real, revised = await verify_finding(verifier, finding, context, call_sites=call_sites)
         if is_real and revised >= verify_threshold:
             return finding.model_copy(update={"confidence": revised})
         log.info("finding_dropped_by_verifier", path=finding.path, line=finding.line)
@@ -214,28 +236,49 @@ async def generate_pr_summary(
     backend: ReviewBackend,
     file_summaries: list[str],
     max_chars: int = 4000,
+    ticket_context: str | None = None,
 ) -> str | None:
     """
     One extra model call producing a terse PR walkthrough.
 
-    file_summaries: "path: first 400 chars of patch" lines. Never raises and
-    never breaks the review: on backend errors or unparseable output it logs
-    and returns None (the summary is polish).
+    file_summaries: "path: first 400 chars of patch" lines. ticket_context:
+    optional linked-ticket text; when given, the model also returns a
+    ticket_compliance field ("satisfies" | "partially" | "conflicts" | "n/a")
+    rendered as a `Ticket compliance: ...` line. Never raises and never
+    breaks the review: on backend errors or unparseable output it logs and
+    returns None (the summary is polish).
     """
     if not file_summaries:
         return None
     body = "\n".join(file_summaries)[:max_chars]
-    try:
-        text, _ = await backend.complete(
-            SUMMARY_SYSTEM_PROMPT,
-            "Summarize this pull request for reviewers.\n\nChanged files:\n" + body,
+    system_prompt = SUMMARY_SYSTEM_PROMPT
+    user_prompt = "Summarize this pull request for reviewers.\n\nChanged files:\n" + body
+    want_compliance = bool(ticket_context and ticket_context.strip())
+    if want_compliance:
+        system_prompt += (
+            "\nAlso assess the PR against the linked ticket / acceptance criteria "
+            'and include a "ticket_compliance" field: one of "satisfies" | '
+            '"partially" | "conflicts" | "n/a".'
         )
+        user_prompt += (
+            "\n\n## Linked ticket / acceptance criteria\n"
+            + ticket_context.strip()  # type: ignore[union-attr]
+            + "\nAssess whether the PR satisfies these acceptance criteria."
+        )
+    try:
+        text, _ = await backend.complete(system_prompt, user_prompt)
         data = json.loads(_strip_fences(text))
         summary = data.get("summary")
         if not isinstance(summary, str) or not summary.strip():
             log.warning("pr_summary_unparseable")
             return None
-        return summary.strip()
+        result = summary.strip()
+        if want_compliance:
+            compliance = str(data.get("ticket_compliance", "n/a")).strip().lower()
+            if compliance not in {"satisfies", "partially", "conflicts", "n/a"}:
+                compliance = "n/a"
+            result += f"\nTicket compliance: {compliance}"
+        return result
     except (BackendError, ValueError, KeyError, TypeError, AttributeError) as exc:
         log.warning("pr_summary_failed", error=str(exc)[:200])
         return None
@@ -295,6 +338,49 @@ class _FileBackendError(Exception):
         self.error = error
 
 
+# Specialist lens passes: each runs the same prompt-building + finding-parsing
+# plumbing as the general review, but with a focused system prompt and a
+# bounded finding cap (cost discipline).
+_LENS_SYSTEM_PROMPTS = {
+    "test": prompts.TEST_LENS_SYSTEM_PROMPT,
+    "security": prompts.SECURITY_LENS_SYSTEM_PROMPT,
+    "logic": prompts.LOGIC_LENS_SYSTEM_PROMPT,
+}
+_LENS_MAX_FINDINGS = 3
+
+# Appended to the general pass when the PR contains no test changes.
+# Deliberately conservative: at most one low-confidence informational finding,
+# and nothing at all for trivial changes.
+_MISSING_TESTS_NOTE = (
+    "\n\nNote: this PR contains no test changes. If the diff adds new exported "
+    "functions, branches, or error paths, report at most ONE low-severity "
+    "informational finding (category `correctness`, confidence <= 0.6) naming "
+    "the specific untested function/branch and the test to write. "
+    "Do not report this if the change is trivial."
+)
+
+
+def _normalize_title(title: str) -> str:
+    """Collapse case/whitespace so near-identical titles dedupe."""
+    return " ".join(title.lower().split())
+
+
+def dedupe_cross_lens(findings: list[Finding]) -> list[Finding]:
+    """
+    Drop findings duplicated across the general + lens passes.
+
+    Same (path, line, category, normalized title) keeps the highest
+    confidence; first-seen order is preserved.
+    """
+    best: dict[tuple[str, int, str, str], Finding] = {}
+    for finding in findings:
+        key = (finding.path, finding.line, finding.category, _normalize_title(finding.title))
+        prev = best.get(key)
+        if prev is None or finding.confidence > prev.confidence:
+            best[key] = finding
+    return list(best.values())
+
+
 async def _review_one_file(
     plan: _FilePlan,
     primary: ReviewBackend,
@@ -306,15 +392,35 @@ async def _review_one_file(
     base_sha: str,
     head_sha: str,
     system_prompt: str | None = None,
+    lens: str | None = None,
+    note_missing_tests: bool = False,
+    skip_enrichment: bool = False,
 ) -> list[Finding]:
+    """
+    Review one file with the primary backend.
+
+    lens: run a bounded specialist pass ("test" | "security" | "logic") with
+    the lens system prompt and max_findings capped at 3. When None, the
+    general review runs (repo instructions + optional missing-tests note).
+    skip_enrichment: skip blob context fetch (the orchestrator already
+    enriched once for all passes of this file).
+    """
     changed = plan.changed
     # The full patch is the primary diff signal (hunks carry line numbers);
     # extract_hunk_context() is used for targeted verification snippets.
 
-    try:
-        await enrich_with_context(client, owner, repo, base_sha, head_sha, changed)
-    except Exception as exc:  # noqa: BLE001 - context enrichment is best-effort
-        log.warning("context_enrich_failed", path=changed.filename, error=str(exc)[:200])
+    if not skip_enrichment:
+        try:
+            await enrich_with_context(client, owner, repo, base_sha, head_sha, changed)
+        except Exception as exc:  # noqa: BLE001 - context enrichment is best-effort
+            log.warning("context_enrich_failed", path=changed.filename, error=str(exc)[:200])
+
+    if lens is not None:
+        active_system_prompt = _LENS_SYSTEM_PROMPTS[lens]
+        max_findings = _LENS_MAX_FINDINGS
+    else:
+        active_system_prompt = system_prompt or prompts.SYSTEM_PROMPT
+        max_findings = int(cfg.get("max_findings_per_file", 10))
 
     user_prompt = prompts.build_user_prompt(
         path=changed.filename,
@@ -322,15 +428,19 @@ async def _review_one_file(
         hunk_context=changed.patch or "",
         head_excerpt=changed.head_excerpt,
         base_excerpt=changed.base_excerpt,
-        max_findings=int(cfg.get("max_findings_per_file", 10)),
+        max_findings=max_findings,
     )
-    # Per-path repo instructions (glob -> text), appended verbatim.
-    path_instructions = cfg.get("path_instructions", {}) or {}
-    for glob, text in path_instructions.items():
-        if fnmatch.fnmatch(changed.filename, glob):
-            user_prompt += f"\n\n## Instructions for this file\n{text}"
+    if lens is None:
+        # Per-path repo instructions (glob -> text), appended verbatim.
+        path_instructions = cfg.get("path_instructions", {}) or {}
+        for glob, text in path_instructions.items():
+            if fnmatch.fnmatch(changed.filename, glob):
+                user_prompt += f"\n\n## Instructions for this file\n{text}"
+        # Conservative test-gap nudge (general pass only).
+        if note_missing_tests:
+            user_prompt += _MISSING_TESTS_NOTE
     try:
-        findings, usage = await primary.analyze(system_prompt or prompts.SYSTEM_PROMPT, user_prompt)
+        findings, usage = await primary.analyze(active_system_prompt, user_prompt)
     except BackendError as exc:
         # Fail LOUD, never silent: an exception here means the model did not
         # run. Returning [] would post a fake "looks clean" review.
@@ -339,11 +449,177 @@ async def _review_one_file(
     log.info(
         "file_reviewed",
         path=changed.filename,
+        lens=lens or "general",
         findings=len(findings),
         usage={k: v for k, v in usage.items() if k in ("prompt_tokens", "completion_tokens")},
     )
     # Force the schema path to the actual file (models sometimes echo it wrong).
     return [f.model_copy(update={"path": changed.filename}) for f in findings]
+
+
+async def _review_plan_with_lenses(
+    plan: _FilePlan,
+    primary: ReviewBackend,
+    cfg: RepoConfig,
+    settings: Settings,
+    client: GitHubClient,
+    owner: str,
+    repo: str,
+    base_sha: str,
+    head_sha: str,
+    system_prompt: str,
+    note_missing_tests: bool,
+) -> list[Finding]:
+    """
+    Run the general review plus any specialist lens passes for one file.
+
+    - Test files get an extra bounded test-scrutiny pass (the general review
+      still runs unchanged - no deprioritization).
+    - Non-test files with a non-trivial patch (>200 bytes) get security and
+      logic lens passes, concurrent with the general one.
+    All findings are merged and cross-lens deduped before the confidence gate.
+    A failed lens pass is logged and skipped; it must never sink the file.
+    """
+    changed = plan.changed
+    # Enrich once: lens passes reuse the excerpts via skip_enrichment.
+    try:
+        await enrich_with_context(client, owner, repo, base_sha, head_sha, changed)
+    except Exception as exc:  # noqa: BLE001 - context enrichment is best-effort
+        log.warning("context_enrich_failed", path=changed.filename, error=str(exc)[:200])
+
+    if prompts.is_test_file(changed.filename):
+        lens_names = ["test"]
+    elif len((changed.patch or "").encode("utf-8")) > 200:
+        lens_names = ["security", "logic"]
+    else:
+        lens_names = []
+
+    async def _run_general() -> list[Finding]:
+        # Fail loud: a dead general pass must surface, never fake "clean".
+        return await _review_one_file(
+            plan,
+            primary,
+            cfg,
+            settings,
+            client,
+            owner,
+            repo,
+            base_sha,
+            head_sha,
+            system_prompt=system_prompt,
+            note_missing_tests=note_missing_tests,
+            skip_enrichment=True,
+        )
+
+    async def _run_lens(name: str) -> list[Finding]:
+        try:
+            return await _review_one_file(
+                plan,
+                primary,
+                cfg,
+                settings,
+                client,
+                owner,
+                repo,
+                base_sha,
+                head_sha,
+                lens=name,
+                skip_enrichment=True,
+            )
+        except _FileBackendError as exc:
+            log.warning(
+                "lens_review_failed",
+                lens=name,
+                path=changed.filename,
+                error=str(exc)[:200],
+            )
+            return []
+
+    groups = await asyncio.gather(_run_general(), *(_run_lens(n) for n in lens_names))
+    merged = dedupe_cross_lens([f for group in groups for f in group])
+    log.info(
+        "file_lenses_reviewed",
+        path=changed.filename,
+        lenses=lens_names,
+        general_findings=len(groups[0]),
+        lens_findings=[len(g) for g in groups[1:]],
+        merged_findings=len(merged),
+    )
+    return merged
+
+
+# ---------------------------------------------------------------------------
+# Call-site context for the verifier
+# ---------------------------------------------------------------------------
+
+_ADDED_SYMBOL_PATTERNS = [
+    re.compile(r"^(?:def|class)\s+([A-Za-z_][A-Za-z0-9_]*)"),  # python
+    re.compile(r"^func\s+(?:\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)"),  # go
+    re.compile(r"^fn\s+([A-Za-z_][A-Za-z0-9_]*)"),  # rust
+    re.compile(r"^function\s+([A-Za-z_][A-Za-z0-9_]*)"),  # js/ts
+    re.compile(r"^(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*="),  # js/ts const
+]
+
+
+def _changed_symbols(patch: str, filename: str) -> list[str]:
+    """
+    Best-effort extraction of top-level symbol names added by a patch.
+
+    Only unindented `+` lines are considered (top-level defs/classes/funcs/
+    consts); a leading `export ` is stripped first. Returns at most 5 names,
+    order of first appearance, deduped.
+    """
+    del filename  # reserved: language-specific refinement later
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for raw in (patch or "").splitlines():
+        if not raw.startswith("+") or raw.startswith("+++"):
+            continue
+        line = raw[1:]
+        if line != line.lstrip():  # indented: not top-level
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :]
+            if line.startswith("default "):
+                line = line[len("default ") :]
+        for pattern in _ADDED_SYMBOL_PATTERNS:
+            match = pattern.match(line)
+            if match:
+                name = match.group(1)
+                if name not in seen:
+                    seen.add(name)
+                    symbols.append(name)
+                break
+        if len(symbols) >= 5:
+            break
+    return symbols
+
+
+async def fetch_call_sites(client: GitHubClient, owner: str, repo: str, symbol: str) -> str:
+    """
+    Best-effort GitHub code search for a symbol's usages.
+
+    Returns one repo-relative path line per hit (up to 3), or "" on any
+    error: the search API 403/429s on many tokens and may time out, so
+    failures are logged once and skipped - they must never break the review.
+    """
+    if not symbol:
+        return ""
+    try:
+        data = await client.get(
+            "/search/code",
+            params={"q": f"{symbol} repo:{owner}/{repo}", "per_page": 3},
+        )
+        items = data.get("items", []) if isinstance(data, dict) else []
+        paths = [
+            str(item.get("path", ""))
+            for item in items
+            if isinstance(item, dict) and item.get("path")
+        ]
+        return "\n".join(paths[:3])
+    except Exception as exc:  # noqa: BLE001 - search is best-effort
+        log.info("call_site_search_skipped", symbol=symbol, error=str(exc)[:200])
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -359,6 +635,7 @@ async def review_pull_request(
     repo: str,
     pr_number: int,
     deps: EngineDeps | None = None,
+    ticket_context: str | None = None,
 ) -> ReviewResult:
     """Run the full review pipeline for one PR. Never raises on reviewable PRs."""
     deps = deps or EngineDeps()
@@ -399,17 +676,26 @@ async def review_pull_request(
     backend_errors: list[str] = []
     failed_paths: set[str] = set()
 
-    # Repo-level review instructions thread into the system prompt; per-path
-    # instructions are applied per file inside _review_one_file.
-    instructions = str(cfg.get("instructions") or "")
-    system_prompt = prompts.SYSTEM_PROMPT + (
-        "\n\n## Repository review instructions\n" + instructions if instructions else ""
-    )
+    # Repo-level review instructions + plain-English team standards thread
+    # into the system prompt; per-path instructions are applied per file
+    # inside _review_one_file.
+    system_prompt = prompts.SYSTEM_PROMPT + build_team_standards(cfg)
+    # Linked ticket / acceptance criteria (optional): reviewed against as well
+    # as for defects. This block is independent of the instructions block.
+    if ticket_context and ticket_context.strip():
+        system_prompt += (
+            "\n\n## Linked ticket / acceptance criteria\n"
+            + ticket_context.strip()
+            + "\nReview the diff against these acceptance criteria as well as for defects."
+        )
+
+    # Conservative test-gap nudge: only when the PR changes no test files.
+    has_test_changes = any(prompts.is_test_file(p.changed.filename) for p in plans)
 
     async def _guarded(plan: _FilePlan) -> list[Finding]:
         async with semaphore:
             try:
-                return await _review_one_file(
+                return await _review_plan_with_lenses(
                     plan,
                     primary,
                     cfg,
@@ -420,6 +706,7 @@ async def review_pull_request(
                     base_sha,
                     head_sha,
                     system_prompt=system_prompt,
+                    note_missing_tests=not has_test_changes,
                 )
             except _FileBackendError as exc:
                 backend_errors.append(f"{exc.path}: {exc.error}")
@@ -441,13 +728,35 @@ async def review_pull_request(
     verify_threshold = float(cfg.get("confidence_verify") or settings.confidence_verify)
 
     # Confidence gate (needs hunk context per path for the verifier).
+    # Call-site context: best-effort code search for up to 2 changed symbols
+    # per finding, capped at ~10 searches per PR via a shared counter. Search
+    # failures are swallowed inside fetch_call_sites / the fetcher wrapper and
+    # never break verification.
     hunk_contexts = {p.changed.filename: (p.changed.patch or "") for p in plans}
+    symbols_by_path = {
+        p.changed.filename: _changed_symbols(p.changed.patch or "", p.changed.filename)
+        for p in plans
+    }
+    search_budget = [10]
+
+    async def _call_site_fetcher(finding: Finding) -> str:
+        parts: list[str] = []
+        for symbol in symbols_by_path.get(finding.path, [])[:2]:
+            if search_budget[0] <= 0:
+                break
+            search_budget[0] -= 1
+            hits = await fetch_call_sites(client, owner, repo, symbol)
+            if hits:
+                parts.append(f"{symbol}:\n{hits}")
+        return "\n".join(parts)
+
     findings = await apply_confidence_gate(
         findings,
         verifier,
         hunk_contexts,
         auto_post,
         verify_threshold,
+        call_site_fetcher=_call_site_fetcher,
     )
 
     # Terse PR walkthrough (polish only): needs at least one successfully
@@ -457,7 +766,11 @@ async def review_pull_request(
         for p in plans
         if p.changed.filename not in failed_paths
     ]
-    pr_summary = await generate_pr_summary(primary, file_summaries) if file_summaries else None
+    pr_summary = (
+        await generate_pr_summary(primary, file_summaries, ticket_context=ticket_context)
+        if file_summaries
+        else None
+    )
 
     # Line validation, severity threshold, disabled categories.
     findings = validate_finding_lines(findings, {p.changed.filename: p.commentable for p in plans})

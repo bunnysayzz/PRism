@@ -69,6 +69,9 @@ class ReviewResult(BaseModel):
     backend_errors: list[str] = Field(default_factory=list)
     # Terse model-generated PR walkthrough (polish; None when unavailable).
     pr_summary: str | None = None
+    # Rendering-layer outputs (computed by the worker, not the engine).
+    merge_score: float = 0.0
+    verdict: str = ""
 
 
 def parse_findings(raw: str | list[dict[str, Any]] | dict[str, Any]) -> list[Finding]:

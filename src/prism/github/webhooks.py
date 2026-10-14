@@ -53,6 +53,18 @@ class ReviewJob:
     pr_number: int
 
 
+@dataclass(frozen=True)
+class FixCommand:
+    """An `@prism fix` request from an issue_comment webhook event."""
+
+    installation_id: int
+    owner: str
+    repo: str
+    pr_number: int
+    comment_id: int
+    requester: str
+
+
 def parse_event(headers: dict[str, str], payload: dict[str, Any]) -> ReviewJob | None:
     """
     Dispatch on X-GitHub-Event + action.
@@ -99,3 +111,55 @@ def parse_event(headers: dict[str, str], payload: dict[str, Any]) -> ReviewJob |
         return None
 
     return ReviewJob(installation_id=installation_id, owner=owner, repo=repo, pr_number=pr_number)
+
+
+def parse_command_event(headers: dict[str, str], payload: dict[str, Any]) -> FixCommand | None:
+    """
+    Dispatch `@prism fix` commands from issue_comment events.
+
+    Returns a FixCommand when the event is issue_comment/created, the comment
+    body mentions `@prism fix`, and the issue is a pull request. Returns None
+    for anything else. Never raises, even on attacker-controlled input.
+    """
+    if not isinstance(headers, dict) or not isinstance(payload, dict):
+        return None
+    # Normalize header lookup (case-insensitive).
+    lowered = {k.lower(): v for k, v in headers.items()}
+    event = lowered.get(EVENT_HEADER.lower())
+    if not event or str(event).lower() != "issue_comment":
+        return None
+    if payload.get("action") != "created":
+        return None
+
+    comment = payload.get("comment")
+    if not isinstance(comment, dict):
+        return None
+    body = str(comment.get("body") or "")
+    if "@prism fix" not in body.lower():
+        return None
+
+    # The command only applies to pull requests, not plain issues.
+    issue = payload.get("issue")
+    if not isinstance(issue, dict) or not issue.get("pull_request"):
+        log.info("fix_command_ignored_not_a_pr")
+        return None
+
+    try:
+        installation_id = int(payload["installation"]["id"])
+        owner = payload["repository"]["owner"]["login"]
+        repo = payload["repository"]["name"]
+        pr_number = int(issue["number"])
+        comment_id = int(comment["id"])
+        requester = str(comment["user"]["login"])
+    except (KeyError, TypeError, ValueError) as exc:
+        log.warning("fix_command_malformed_payload", error=str(exc))
+        return None
+
+    return FixCommand(
+        installation_id=installation_id,
+        owner=owner,
+        repo=repo,
+        pr_number=pr_number,
+        comment_id=comment_id,
+        requester=requester,
+    )

@@ -190,6 +190,9 @@ def load_repo_config(path: str | os.PathLike[str] | None = None) -> RepoConfig:
     cfg["model_routing"] = data.get("model_routing", {})
     cfg["max_findings_per_file"] = int(data.get("max_findings_per_file", 10))
     cfg["instructions"] = str(data.get("instructions") or "")
+    cfg["rules"] = [str(r) for r in (data.get("rules") or []) if str(r).strip()]
+    tracker = data.get("tracker")
+    cfg["tracker"] = tracker if isinstance(tracker, dict) else {}
     cfg["path_instructions"] = {
         str(k): str(v) for k, v in (data.get("path_instructions") or {}).items()
     }
@@ -247,8 +250,10 @@ def merge_repo_config(server: RepoConfig, repo: dict[str, Any]) -> RepoConfig:
       2. ``review_profile`` preset ("chill" / "assertive") for keys not explicit.
       3. The server config.
 
-    ``ignore_globs`` is the union of both lists, deduped, order preserved
-    (server first). An unknown ``review_profile`` is ignored with a warning.
+    ``ignore_globs`` and ``rules`` are the union of both lists, deduped,
+    order preserved (server first). ``tracker`` is repo-wins outright when
+    present and non-empty (it holds secrets - never merge, never log).
+    An unknown ``review_profile`` is ignored with a warning.
     """
     merged = RepoConfig(server)
     repo = repo or {}
@@ -272,6 +277,23 @@ def merge_repo_config(server: RepoConfig, repo: dict[str, Any]) -> RepoConfig:
                 server_globs.append(glob)
     merged["ignore_globs"] = server_globs
 
+    # Plain-English rules: union, server first, deduped, order preserved.
+    server_rules = list(merged.get("rules") or [])
+    repo_rules = repo.get("rules") or []
+    if isinstance(repo_rules, list):
+        seen_rules = set(server_rules)
+        for rule in repo_rules:
+            rule_str = str(rule)
+            if rule_str.strip() and rule_str not in seen_rules:
+                seen_rules.add(rule_str)
+                server_rules.append(rule_str)
+    merged["rules"] = server_rules
+
+    # Tracker config holds the API token: repo wins outright, never merged.
+    repo_tracker = repo.get("tracker")
+    if isinstance(repo_tracker, dict) and repo_tracker:
+        merged["tracker"] = repo_tracker
+
     profile = repo.get("review_profile")
     if profile:
         preset = _REVIEW_PROFILES.get(str(profile).lower())
@@ -288,6 +310,27 @@ def merge_repo_config(server: RepoConfig, repo: dict[str, Any]) -> RepoConfig:
                     merged[key] = value
 
     return merged
+
+
+def build_team_standards(cfg: RepoConfig) -> str:
+    """Build the team-standards prompt section from the merged repo config.
+
+    Returns ``""`` when both ``instructions`` and ``rules`` are empty.
+    Otherwise emits a "Repository review instructions" section (when
+    instructions are present) followed by a "Team standards" section of
+    binding plain-English rules (when rules are present).
+    """
+    instructions = str(cfg.get("instructions") or "")
+    rules = [str(r) for r in (cfg.get("rules") or []) if str(r).strip()]
+    parts: list[str] = []
+    if instructions.strip():
+        parts.append("\n\n## Repository review instructions\n" + instructions)
+    if rules:
+        parts.append(
+            "\n\n## Team standards (follow these as binding review rules)\n"
+            + "\n".join(f"- {r}" for r in rules)
+        )
+    return "".join(parts)
 
 
 def is_repo_allowed(cfg: RepoConfig, owner: str, repo: str) -> bool:

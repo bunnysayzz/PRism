@@ -33,15 +33,20 @@ from fastapi import FastAPI, Header, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from prism.config import Settings, get_settings
-from prism.github.client import GitHubAPIError
+from prism.github.auth import get_installation_token
+from prism.github.client import GitHubAPIError, GitHubClient
+from prism.github.commands import handle_fix_command
 from prism.github.webhooks import (
     EVENT_HEADER,
     SIGNATURE_HEADER,
+    FixCommand,
+    parse_command_event,
     parse_event,
     verify_signature,
 )
 from prism.landing import render_landing
 from prism.logging import get_logger, setup_logging
+from prism.review.analytics import get_repo_stats
 from prism.review.backends import BackendError
 from prism.worker import review_pr
 
@@ -296,6 +301,47 @@ def _webhook_error_status(exc: Exception) -> int:
     return 500
 
 
+async def _handle_fix_command_request(settings: Settings, cmd: FixCommand) -> JSONResponse:
+    """Run an `@prism fix` command inline and classify the outcome.
+
+    Same contract as the inline review path: transient/unknown failures ->
+    500 so GitHub redelivers; permanent ones -> 200 with the failure as JSON.
+    Error bodies never include secrets: type + short message only.
+    """
+    log.info(
+        "webhook_fix_command",
+        repo=f"{cmd.owner}/{cmd.repo}",
+        pr=cmd.pr_number,
+        requester=cmd.requester,
+    )
+    try:
+        token = await get_installation_token(settings, cmd.installation_id)
+        async with GitHubClient(settings, installation_token=token) as client:
+            result = await asyncio.wait_for(
+                handle_fix_command(client, cmd),
+                timeout=INLINE_REVIEW_TIMEOUT_S,
+            )
+    except Exception as exc:  # noqa: BLE001 - webhook must classify, never crash
+        status_code = _webhook_error_status(exc)
+        log.error(
+            "fix_command_request_failed",
+            repo=f"{cmd.owner}/{cmd.repo}",
+            pr=cmd.pr_number,
+            error_type=type(exc).__name__,
+            error=str(exc)[:200],
+            http_status=status_code,
+        )
+        return JSONResponse(
+            {
+                "status": "error",
+                "error_type": type(exc).__name__,
+                "error": str(exc)[:200],
+            },
+            status_code=status_code,
+        )
+    return JSONResponse({"status": "fix_command", "result": result})
+
+
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
@@ -347,6 +393,12 @@ def create_app() -> FastAPI:
             status_code=200 if ready else 503,
         )
 
+    @app.get("/analytics/{owner}/{repo}")
+    async def analytics(owner: str, repo: str) -> JSONResponse:
+        """Read-only review aggregates for a repo. No auth: aggregates only,
+        no secrets, no code. The store is in-memory and ephemeral."""
+        return JSONResponse(get_repo_stats(owner, repo))
+
     @app.post("/webhooks/github")
     async def github_webhook(
         request: Request,
@@ -392,6 +444,12 @@ def create_app() -> FastAPI:
             payload,
         )
         if job is None:
+            cmd = parse_command_event(
+                {SIGNATURE_HEADER: x_hub_signature_256 or "", EVENT_HEADER: x_github_event or ""},
+                payload,
+            )
+            if cmd is not None:
+                return await _handle_fix_command_request(settings, cmd)
             return JSONResponse({"status": "ignored"})
 
         log.info(
