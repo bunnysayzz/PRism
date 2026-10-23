@@ -1,10 +1,99 @@
-# PRism 🤖
+<p align="center">
+  <img src="docs/assets/logo.png" alt="PRism logo" width="120">
+</p>
+
+<h1 align="center">PRism</h1>
+
+<p align="center">
+  <strong>Autonomous AI code review for GitHub pull requests.</strong><br>
+  Confidence-gated findings, adversarial verification, and one-click fixes,
+  powered by your own fine-tuned model or any OpenAI-compatible API.
+</p>
+
+<p align="center">
+  <a href="https://github.com/bunnysayzz/PRism/actions/workflows/ci.yml"><img src="https://github.com/bunnysayzz/PRism/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/tests-454%20passing-brightgreen" alt="Tests: 454 passing">
+  <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+">
+  <a href="https://github.com/apps/prism-reviews-bot/installations/new"><img src="https://img.shields.io/badge/install-GitHub%20App-238636" alt="Install the GitHub App"></a>
+</p>
 
 PRism is an **autonomous PR review bot** delivered as a **GitHub App**. It reviews every
-pull request with your fine-tuned code-review LLM, gates findings through a
-confidence system with a stronger-model second pass, and posts inline review
-comments - while every human reaction feeds a retraining loop that makes the
-reviewer smarter over time.
+pull request with an LLM reviewer, gates findings through a confidence system
+with an adversarial verification pass, and posts inline review comments.
+Serve your own fine-tuned model, or plug in any OpenAI-compatible API
+provider; human reactions feed a retraining loop that makes the reviewer
+smarter over time.
+
+## Features
+
+**Review quality**
+
+- Confidence gate with an adversarial second pass: borderline findings are
+  re-checked by a verifier that tries to refute them before anything posts.
+- Parallel specialist lenses (security, logic) run alongside the general
+  review, with call-site context pulled in via code search.
+- Test-file scrutiny lens that checks whether new tests actually assert the
+  intended behavior.
+- Deterministic secrets scanning for keys and tokens leaked into the diff.
+- Exact line validation against the diff, plus stable fingerprint dedup so
+  reworded findings never repost as duplicates.
+
+**Output that respects reviewers**
+
+- Actionable findings post inline; nitpicks are collapsed into a separate
+  section and never mixed in with real issues.
+- Fixes ship as one-click GitHub `suggestion` blocks.
+- Every review carries a PR summary with a verdict, a merge-confidence
+  score, and an effort estimate. Clean, high-confidence PRs get a
+  `safe-to-merge` label and can be auto-approved.
+- A "Prompt for AI agents" block restates findings in a form a coding agent
+  (Claude Code, Codex) can act on directly.
+
+**Control**
+
+- Per-repo [`.prism.yml`](docs/PRISM_YML.md): review instructions,
+  plain-English team `rules:`, per-path instructions, chill/assertive
+  profiles, severity thresholds, ignore globs.
+- Ticket-bound review: link a Linear or Jira ticket and the diff is checked
+  against its acceptance criteria.
+- Test-gap detection flags new logic paths that land without tests.
+- `@prism fix` in a PR comment applies the bot's suggested fixes as a commit.
+- WIP and draft PRs are skipped automatically.
+
+**Operations**
+
+- Bring your own backend: self-hosted fine-tuned model (vLLM), or a chain of
+  OpenAI-compatible API providers with per-request failover.
+- Fail-loud reviews: if the model backend fails, the review says so instead
+  of posting a fake "looks clean".
+- Review analytics at `GET /analytics/{owner}/{repo}` (fix rates, trends,
+  severity distribution), Sentry integration, and a `/readyz` probe that
+  verifies the model credential is live.
+
+## Install the hosted app
+
+1. **Install:** [github.com/apps/prism-reviews-bot](https://github.com/apps/prism-reviews-bot/installations/new)
+2. **Pick repositories** to enable PRism on.
+3. **Open a pull request.** The review lands automatically, usually in under
+   a minute. Customize behavior per repo with a
+   [`.prism.yml`](docs/PRISM_YML.md) file.
+
+Prefer to self-host? The full setup (Docker, local dev, provider config) is
+under [Quickstart](#quickstart) below.
+
+## How it works
+
+1. **Webhook:** GitHub notifies PRism when a PR is opened, reopened, or
+   updated. The signature is HMAC-verified and the event is rate-limited.
+2. **Review pipeline:** PRism fetches the diff, enriches it with file and
+   call-site context, runs the deterministic secrets scan, then reviews each
+   file with the general and specialist lenses.
+3. **Verification:** findings pass the confidence gate; borderline ones go
+   through the adversarial verifier. Survivors are validated against
+   commentable diff lines and deduplicated.
+4. **Post:** one review lands on the PR: summary, verdict and merge score,
+   inline findings with suggestion blocks, and collapsed nitpicks.
 
 ## Architecture
 
@@ -172,6 +261,9 @@ config. New/prod-related vars are marked ★.
 `severity_threshold` (`low|medium|high|critical`), `ignore_globs`,
 per-`categories` enable/disable (style is off by default), `max_findings_per_file`.
 
+Repos can override all of this per-repo with a `.prism.yml` file in their
+root: see [docs/PRISM_YML.md](docs/PRISM_YML.md).
+
 ### Observability
 
 - `GET /healthz` - liveness, always 200 when the process is up.
@@ -295,7 +387,9 @@ blocker, never skip it.
   per installation, 429 + `Retry-After`). **Note:** the limiter is in-memory and
   single-process - for multi-replica deployments, move it to Redis (future work).
 - Installation tokens are cached in memory and refreshed 60s before expiry.
-- The bot only *comments* (`event: "COMMENT"`) - it never approves, requests changes, or mutates code.
+- Reviews post as comments (`event: "COMMENT"`) by default. Auto-approve is
+  limited to clean, high-confidence PRs, and code only changes when a human
+  explicitly comments `@prism fix`.
 - No secrets in the repo: `.env`, `private-key.pem`, `*.pem`, `config.yaml`,
   `feedback_data/` are all gitignored and excluded from the Docker build context
   (`.dockerignore`).
@@ -305,6 +399,8 @@ blocker, never skip it.
 ```
 src/prism/
   main.py            FastAPI: /webhooks/github, /healthz, /readyz, rate limiting
+  landing.py         marketing landing page (self-contained HTML)
+  logo_data.py       embedded logo data URI for the landing page
   worker.py          arq worker: review_pr job
   config.py          pydantic-settings + YAML repo config + redacted() dump
   logging.py         structlog JSON/console logging (secrets redacted)
@@ -313,15 +409,21 @@ src/prism/
     client.py        httpx client: retries, backoff, rate-limit respect
     webhooks.py      HMAC verify + event dispatch
     reviews.py       review payload builder + posting + dedup fetch
+    repoconfig.py    fetch + parse the target repo's .prism.yml
+    tracker.py       Linear/Jira ticket fetch for ticket-bound review
+    commands.py      @prism fix command handling
   diff/
     fetcher.py       list/filter PR files, fetch base/head context
     hunks.py         unified-diff parsing → commentable lines
   review/
     schemas.py       Finding / ReviewResult (pydantic v2)
-    prompts.py       reviewer system + per-file prompts
+    prompts.py       reviewer system + per-file prompts + specialist lenses
     backends.py      vLLM / HF endpoint / OpenAI-compatible / stub
-    engine.py        orchestration + confidence gate
+    providers.py     OpenAI-compatible provider chain with failover
+    engine.py        orchestration + confidence gate + adversarial verify
     dedup.py         finding fingerprints
+    secrets.py       deterministic secrets scanning over the diff
+    analytics.py     per-repo review quality stats (/analytics)
   feedback/
     store.py         JSONL findings + outcomes
     export.py        → fine-tune train.jsonl
@@ -339,3 +441,12 @@ pip install -e ".[dev]"
 .venv/bin/python -m ruff format --check src tests
 .venv/bin/python -m mypy src                # strict type check
 ```
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+dev setup, code standards, and PR expectations.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

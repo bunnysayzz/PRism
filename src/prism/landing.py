@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from prism.logo_data import LOGO_DATA_URI
+
 INSTALL_URL = "https://github.com/apps/prism-reviews-bot/installations/new"
 SOURCE_URL = "https://github.com/bunnysayzz/PRism"
 DOCS_URL = "https://github.com/bunnysayzz/PRism#readme"
@@ -54,7 +56,9 @@ background:rgba(10,10,15,.72);
 border-bottom:1px solid rgba(255,255,255,.06)}
 nav .wrap{display:flex;align-items:center;justify-content:space-between;
 height:64px}
-.brand{font-weight:700;font-size:1.15rem;letter-spacing:-.02em;color:var(--text)}
+.brand{display:flex;align-items:center;gap:.55rem;font-weight:700;
+font-size:1.15rem;letter-spacing:-.02em;color:var(--text)}
+.brand img{width:30px;height:30px;border-radius:7px;display:block}
 .brand:hover{text-decoration:none}
 .brand em{font-style:normal;color:var(--green-hi)}
 .nav-links{display:flex;gap:1.6rem;font-size:.9rem}
@@ -71,6 +75,9 @@ text-decoration:none}
 .btn-lg{padding:.85rem 2.1rem;font-size:1rem}
 /* hero */
 .hero{text-align:center;padding:6rem 1.5rem 0}
+.hero-logo{display:block;width:104px;height:104px;border-radius:24px;
+margin:0 auto 1.8rem;
+box-shadow:0 0 0 1px rgba(255,255,255,.08),0 18px 50px rgba(0,0,0,.5)}
 .pill{display:inline-block;font-size:.78rem;font-weight:500;color:var(--muted);
 border:1px solid rgba(255,255,255,.12);border-radius:999px;
 padding:.35rem 1rem;margin-bottom:1.6rem}
@@ -202,7 +209,7 @@ def _mock_html() -> str:
         "<code>any</code> parameters</p>"
         '<p class="mf-body">With <code>a</code> and <code>b</code> typed as '
         "<code>any</code>, <code>a + b</code> silently concatenates strings "
-        'instead of adding numbers — <code>addPoints("1", 2)</code> returns '
+        'instead of adding numbers: <code>addPoints("1", 2)</code> returns '
         '<code>"12"</code>.</p>'
         '<div class="mf-fix"><span class="k">Fix</span>'
         "<code>export function addPoints(a: number, b: number)</code></div>"
@@ -226,7 +233,7 @@ def render_landing(checks: dict[str, Any]) -> str:
 <body>
 <div class="bg"></div><div class="glow"></div>
 <nav><div class="wrap">
-<a class="brand" href="/">PR<em>ism</em></a>
+<a class="brand" href="/"><img src="{LOGO_DATA_URI}" alt="PRism logo">PR<em>ism</em></a>
 <div class="nav-links">
 <a href="#features">Features</a>
 <a href="#how">How it works</a>
@@ -236,6 +243,7 @@ def render_landing(checks: dict[str, Any]) -> str:
 <a class="btn btn-primary btn-nav" href="{INSTALL_URL}">Install</a>
 </div></nav>
 <header class="hero">
+<img class="hero-logo" src="{LOGO_DATA_URI}" alt="PRism logo">
 <span class="pill"><b>PRism Reviews Bot</b> for GitHub</span>
 <h1>Ship pull requests with <span class="grad">confidence.</span></h1>
 <p class="sub">An autonomous code review bot. Every pull request gets checked
@@ -245,7 +253,7 @@ for bugs, vulnerabilities and code smells - inline, with severity and a fix.</p>
 {mock}
 </header>
 <div class="stats wrap">
-<div class="stat"><div class="n">204</div><div class="l">tests passing</div></div>
+<div class="stat"><div class="n">454</div><div class="l">tests passing</div></div>
 <div class="stat"><div class="n">31</div><div class="l">golden eval cases</div></div>
 <div class="stat"><div class="n">1.000</div><div class="l">eval F1 score</div></div>
 <div class="stat"><div class="n">&lt;60s</div><div class="l">review turnaround</div></div>
