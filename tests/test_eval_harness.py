@@ -522,3 +522,41 @@ async def test_runner_still_passes_example_golden():
     # The pre-existing runner entry point keeps working after the refactor.
     rc = await run_eval(REPO_ROOT / "eval" / "golden.example.jsonl", "stub", 0.0)
     assert rc == 0
+
+
+async def test_runner_keeps_verify_band_stub_findings(tmp_path, monkeypatch):
+    # Regression: CI failed with F1 0.545 because stub findings in the verify
+    # band (0.70-0.90 under production defaults) were sent to an empty
+    # verdict stub that rejects everything. Locally it passed only because
+    # the gitignored .env lowered auto_post to 0.8. The runner must confirm
+    # canned findings and pin production thresholds, so CI and local agree.
+    import json
+
+    import prism.eval.runner as runner_mod
+    from prism.config import Settings
+
+    monkeypatch.setattr(
+        runner_mod,
+        "get_settings",
+        lambda: Settings(confidence_auto_post=0.90, confidence_verify=0.70),
+    )
+    case = {
+        "id": "verify-band",
+        "path": "a.py",
+        "patch": "@@ -1,2 +1,3 @@\n def f(x):\n+    return eval(x)\n     return 1\n",
+        "expected": [{"line": 2, "category": "security", "severity": "critical"}],
+        "stub_findings": [
+            {
+                "path": "a.py",
+                "line": 2,
+                "severity": "critical",
+                "category": "security",
+                "title": "dangerous eval use",
+                "explanation": "a genuine issue described at sufficient length",
+                "confidence": 0.85,
+            }
+        ],
+    }
+    golden = _write(tmp_path, "verify-band.jsonl", [json.dumps(case)])
+    rc = await run_eval(golden, "stub", 0.70)
+    assert rc == 0

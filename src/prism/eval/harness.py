@@ -53,6 +53,7 @@ from prism.eval.metrics import (
 from prism.eval.runner import (
     VerdictStubBackend,
     run_case_pipeline,
+    verdicts_for_findings,
 )
 from prism.logging import get_logger, setup_logging
 from prism.review.backends import ReviewBackend, StubBackend, build_backend
@@ -539,7 +540,9 @@ class BenchmarkHarness:
             return HeuristicBaseline(), AcceptAllVerifier()
         if backend_name == "stub":
             stub_findings = [Finding.model_validate(f) for f in case.get("stub_findings", [])]
-            return StubBackend(canned={"__all__": stub_findings}), VerdictStubBackend()
+            return StubBackend(canned={"__all__": stub_findings}), VerdictStubBackend(
+                verdicts_for_findings(stub_findings)
+            )
         assert shared_primary is not None and shared_verifier is not None
         return shared_primary, shared_verifier
 

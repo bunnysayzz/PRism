@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from prism.config import get_settings
+from prism.config import Settings, get_settings
 from prism.diff.hunks import commentable_lines
 from prism.eval.metrics import SEVERITY_WEIGHTS as _SEVERITY_WEIGHT
 from prism.logging import get_logger, setup_logging
@@ -103,6 +103,20 @@ class VerdictStubBackend(ReviewBackend):
             ),
             {"backend": self.name},
         )
+
+
+def verdicts_for_findings(findings: list[Finding]) -> dict[str, tuple[bool, float]]:
+    """
+    Verifier verdicts for canned stub findings: the verifier confirms them
+    at their own confidence.
+
+    The stub backend replays canned model outputs, so the eval verifier must
+    confirm true positives the way a real verifier would. Without this, every
+    finding in the verify band is dropped by the empty verdict stub and the
+    gate can never pass under production thresholds, no matter how good the
+    canned outputs are. Unknown titles still fail closed.
+    """
+    return {f.title: (True, f.confidence) for f in findings}
 
 
 def _match(
@@ -207,6 +221,11 @@ async def run_eval(
     verdicts: dict[str, tuple[bool, float]] | None = None,
 ) -> int:
     settings = get_settings()
+    # The eval gate must be deterministic: ambient .env overrides (a dev's
+    # local CONFIDENCE_AUTO_POST, for example) must not change the result
+    # between a laptop and CI. Pin to the production defaults.
+    settings.confidence_auto_post = Settings.model_fields["confidence_auto_post"].default
+    settings.confidence_verify = Settings.model_fields["confidence_verify"].default
     cases = [
         json.loads(line)
         for line in golden_path.read_text(encoding="utf-8").splitlines()
@@ -223,7 +242,9 @@ async def run_eval(
         if backend_name == "stub":
             stub_findings = [Finding.model_validate(f) for f in case.get("stub_findings", [])]
             primary: ReviewBackend = StubBackend(canned={"__all__": stub_findings})
-            verifier: ReviewBackend = VerdictStubBackend(verdicts)
+            verifier: ReviewBackend = VerdictStubBackend(
+                verdicts if verdicts is not None else verdicts_for_findings(stub_findings)
+            )
         else:
             primary = build_backend(settings)
             verifier = build_backend(settings, for_verification=True)
